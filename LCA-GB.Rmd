@@ -50,6 +50,7 @@ hex.2km <- hex.2k[Wales, ]
 ```
 
 # Data preparation/sampling
+
 ```{r}
 # Rasterising LANDMAP data
 VS <- read_sf("http://lle.gov.wales/catalogue/item/LandmapVisualSensory.json") %>%
@@ -164,8 +165,11 @@ p10 <- bespoke_plot(observation = hex.2km,
                    x.label = "LANDMAP evaluation of scenc quality",
                    y.label = "Ruggedness of terrain")
 ```
+
 # Ordinal regression
-#
+
+# 
+
 ```{r}
 ##### 3.2. Include wildness components as additional predictors
 model1 = polr(SQ ~ scale(Sce), data = as(hex.5km, "Spatial"), Hess = TRUE)
@@ -203,6 +207,7 @@ table(model4)
 table(model5)
 table(model6)
 ```
+
 ```{r}
 ##### 3.2. Include wildness components as additional predictors
 model1 = polr(SQ ~ scale(Sce), data = as(hex.2km, "Spatial"), Hess = TRUE)
@@ -242,6 +247,7 @@ table(model6)
 ```
 
 # GLM
+
 ```{r}
 ##### 3.1. Global Model: Generalised Linear Model
 # hex.5km %>%
@@ -255,7 +261,8 @@ table(model6)
 # R2 = 1 - glm$deviance/glm$null.deviance
 ```
 
-# Machine learning - Gradient Boosted 
+# Machine learning - Gradient Boosted
+
 ```{r}
 # GBM hyper-parameters tuning
 # From kaggle: https://www.sciencedirect.com/science/article/pii/S0378778817320844
@@ -322,6 +329,7 @@ tuneplot(xgb_tune)
 # Reference
 # https://github.com/topepo/caret/issues/389
 ```
+
 ```{r}
 # Model evaluation
 #predicted = predict(xgb_tune, x_test)
@@ -351,7 +359,9 @@ hex.2k$SQ.pred <-
   plyr::mapvalues(from = c(1, 2, 3, 4), to = c("Low", "Moderate", "High", "Outstanding")) %>%
   as.factor()
 ```
+
 # Visualisation
+
 ```{r}
 theme_map <- function(...) {
   theme_minimal() +
@@ -411,4 +421,3 @@ p <- ggplot(hex.2k) +
 
 plot(test[, "SQ"])
 ```
-

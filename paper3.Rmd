@@ -1,0 +1,293 @@
+---
+title: "paper3"
+author: "Yi-Min Chang Chien"
+date: '2022-06-02'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Package names
+packages <- c("curl",
+              "dplyr",
+              "entropy",
+              "magrittr",
+              "raster",
+              "readr",
+              "sf",
+              "stringr")
+
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
+
+rm(list = c("installed_packages", "packages"))
+```
+
+```{r}
+#### Data preparation
+## Download the boundary of Wales
+temp <- tempfile()
+temp2 <- tempfile()
+download.file("https://datashare.is.ed.ac.uk/bitstream/handle/10283/2410/Wales_boundary.zip", temp)
+unzip(zipfile = temp, exdir = temp2)
+"Wales boundary.shp" %>%
+  file.path(temp2, .) %>%
+  st_read(stringsAsFactors = FALSE) %>% 
+  st_transform(crs = 27700) %>%
+  st_combine() ->
+  Wales
+rm(list = c("temp", "temp2"))
+
+## Download the visual and sensory aspect of the LANDMAP data  
+VS <- read_sf("http://lle.gov.wales/catalogue/item/LandmapVisualSensory.json") %>%
+  st_make_valid() %>%
+  mutate(ScenicQuality = factor(VS_46, levels = c("Low", "Moderate", "High", "Outstanding")),
+             Integrity = factor(VS_47, levels = c("Low", "Moderate", "High", "Outstanding")),
+             Character = factor(VS_48, levels = c("Low", "Moderate", "High", "Outstanding")),
+                Rarity = factor(VS_49, levels = c("Low", "Moderate", "High", "Outstanding"))) 
+
+## Download the wildness measure and its components
+#"https://github.com/yiminchangchien/scenicness/blob/2a3f9b996c11a7c480867524664401dbea9aea2b/Wildness.RData" %>% url() %>%
+  
+load("C:\\Users\\00631\\Downloads\\James\\Wildness.RData")
+
+## Download Scenic-Or-Not data
+sc <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
+               col_types = cols("ID" = col_number(),
+                                "Lat" = col_double(),
+                                "Lon" = col_double(),
+                                "Average" = col_double(),
+                                "Variance" = col_double(),
+                                "Votes" = col_character(),
+                                "Geograph URI" = col_character())) %>%
+  rowwise() %>%
+  mutate(Mean = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Variance = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% var(),
+         Entropy = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
+         Number = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length())%>%
+  st_as_sf(coords = c("Lon","Lat"), crs = 4326) %>%
+  st_transform(crs = 27700)
+```
+
+```{r}
+LANDMAP <- sc %>% 
+  st_join(VS, .) %>% 
+  aggregate(Votes~UID, data = ., paste0, collapse = ",") %>%
+  merge(VS, ., by = "UID", all = T) %>%
+  as_tibble() %>% 
+  st_as_sf() %>%
+  rowwise() %>%
+  mutate(Scenicness.median = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
+         Scenicness.mean = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.entropy = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
+         Scenicness.number = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length(),
+    Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
+  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, ScenicQuality, Consultant, Votes, Scenicness.median, Scenicness.mean, Scenicness.entropy, Scenicness.number) %>%
+  ungroup()
+
+plot(LANDMAP["ScenicQuality"], border = 'NA', key.pos = 1)  
+```
+
+Add wildness measures
+
+```{r}
+library(exactextractr)
+
+Wildness <- raster('Z:\\R\\R projects\\LCA-GB\\James\\mce_eq256')
+
+LANDMAP <- st_transform(LANDMAP, crs = st_crs(Wildness)) %>%
+  exact_extract(Wildness, ., fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), quantiles = c(0.25, 0.75)) %>%
+  mutate(Wildness.iqr = q75 - q25) %>%
+  dplyr::select(Wildness.mean = mean, Wildness.median = median, Wildness.iqr, Wildness.cv = coefficient_of_variation, Wildness.variance = variance) %>%
+  bind_cols(LANDMAP, .) %>%
+  st_transform(crs = 27700)
+
+
+landmap <- st_cast(LANDMAP, "POLYGON")
+```
+
+```{r}
+library(reticulate)
+
+```
+
+```{python}
+
+import geopandas as gpd
+import pandas as pd
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.compose import make_column_transformer
+
+
+# landmap = geopandas.read_file("/Users/mac/R/LCA-GB/Data/Input/LANDMAP.geojson")
+landmap = r.landmap
+landmap = landmap.dropna(subset=['ScenicQuality'])
+
+print(landmap)
+print(landmap.describe)
+print(landmap['ScenicQuality'].value_counts())
+
+landmap.isnull().sum()
+
+landmap_A = landmap.query("Consultant in ['A']")
+landmap_B = landmap.query("Consultant in ['B']")
+
+print(landmap.shape)
+print(landmap_A.shape)
+print(landmap_B.shape)
+
+# def split_consultant(landmap):
+#   X = landmap.loc[:, ['Scenicness.mean', 'Scenicness.entropy', 'Wildness.median', 'Wildness.iqr']]
+#   y = landmap.loc[:, ['ScenicQuality']]
+# 
+#   # Instantiate the label encoder
+#   transformer = make_column_transformer(
+#     (OrdinalEncoder(categories=[['Low', 'Moderate', 'High', 'Outstanding']]), ['ScenicQuality'])
+#   )
+# 
+#   y = transformer.fit_transform(y)
+#   
+#   y = pd.DataFrame(y, columns = ['ScenicQuality'])
+#   return X, y
+# 
+# def EDA_plot(y, X):
+#   import pandas as pd
+#   # concatenating y and X along columns
+#   landmap_concat = pd.DataFrame(pd.concat([y.reset_index(drop=True), X.reset_index(drop=True)], axis=1))
+#   print(landmap_concat.shape)
+# 
+#   import seaborn as sns
+#   sns.set()
+#   sns.pairplot(landmap_concat, hue='ScenicQuality', palette='vlag', height=3)
+
+# split train/test set
+X = landmap.loc[:, ['Scenicness.mean']]
+y = landmap.loc[:, ['ScenicQuality']]
+
+# from sklearn.preprocessing import OrdinalEncoder
+# OE = OrdinalEncoder()
+# y[['Scale']] = OE.fit_transform(y[['ScenicQuality']])
+
+scale_mapper = {'Low': int(0), 'Moderate': int(1), 'High': int(2), 'Outstanding': int(3)} 
+y[['ScenicQuality']] = y[['ScenicQuality']].replace(scale_mapper).astype('int')
+
+# X, y = split_consultant(landmap)
+print(y.shape, X.shape)
+# EDA_plot(y, X)
+
+ratio = 0.8
+from sklearn.model_selection import train_test_split
+# Create train/test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1 - ratio, train_size=ratio, random_state=19, stratify=y)
+```
+## Hyperparameter Tuning
+```{python}
+%%time
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+
+# Choose hyperparameter domain to search over
+space = {
+  
+         'max_depth':hp.choice('max_depth', np.arange(1, 30, 1, dtype=int)),
+  'colsample_bytree':hp.quniform('colsample_bytree', 0.3, 1.01, 0.05),
+  'min_child_weight':hp.choice('min_child_weight', np.arange(1, 30, 1, dtype=int)),
+         'subsample':hp.quniform('subsample', 0.3, 1.01, 0.05),
+     'learning_rate':hp.choice('learning_rate',    np.arange(0.05, 1.01, 0.05)),
+             'gamma': hp.quniform('gamma', 0.1, 5, 0.05),
+         # 'objective':'reg:squarederror',
+         'objective': 'multi:softmax',
+       'eval_metric': 'rmse',
+    }
+
+def score(params, n_folds=5):
+    
+    #Cross-validation
+    d_train = xgboost.DMatrix(X_coords,y)
+    
+    cv_results = xgboost.cv(params, d_train, nfold = n_folds, num_boost_round=500,
+                        early_stopping_rounds = 10, metrics = 'rmse', seed = 0)
+    
+    loss = min(cv_results['test-rmse-mean'])
+    
+    return loss
+
+
+def optimize(trials, space):
+    
+    best = fmin(score, space, algo=tpe.suggest, max_evals=2000,
+                rstate=np.random.RandomState(333))#Add seed to fmin function
+    return best
+```
+
+## Fit xgboost model
+
+```{python}
+import xgboost as xgb
+# Specify sufficient boosting iterations to reach a minimum
+num_round = 1000 #209.91
+
+# Leave most parameters as default
+param = {'objective': 'multi:softmax',  # Specify multiclass classification
+         'num_class': 4,  # Number of possible output classes
+         # 'tree_method': 'gpu_hist',  # Use GPU accelerated algorithm
+         'eta': 0.451,
+         'max_depth': 12,
+         'gamma': 0,
+         'subsample': 0.758,
+         'colsample_bytree': 1,
+         'min_child_weight': 0.2,
+         'tree_method': 'hist',
+         'predictor': 'cpu_predictor'
+         }
+
+# Convert input data from numpy to XGBoost format
+dtrain = xgb.DMatrix(X_train, label=y_train)
+dtest = xgb.DMatrix(X_test, label=y_test)
+
+import time
+gpu_res = {}  # Store accuracy result
+start = time.time()
+
+# Train model
+# model = xgb.train(param, dtrain, num_round, evals=[(dtest, 'test')], evals_result=gpu_res)
+# print("GPU Training Time: %s seconds" % (str(time.time() - start)))
+model = xgb.train(param, dtrain, num_round, evals=[(dtest, 'test')])
+print(time.time() - start)
+
+# Evaluate model using test data
+from sklearn.metrics import accuracy_score
+predictions = model.predict(dtest)
+accuracy = accuracy_score(y_test, predictions)
+print("Accuracy: %.2f%%" % (accuracy * 100.0))
+
+from sklearn.metrics import cohen_kappa_score
+kappa = cohen_kappa_score(y_test, predictions)
+print("Kappa: %.2f%%" % (kappa))
+
+# save to JSON
+model.save_model("/Users/mac/PycharmProjects/XGBoost/models/model_A.json")
+```
+## SHAP analysis of xgboost results
+```{python}
+explainer_shap = shap.TreeExplainer(final_model)
+shap_values = explainer_shap(X_coords)
+
+shap_interaction_values = shap.TreeExplainer(
+    final_model).shap_interaction_values(X_coords)
+    
+X_names = ['pct_18_34','pct_white','pct_bach',
+          'pct_no_car','log_pop_den','job_entropy','network_den',
+          'ave_trip_dist','pct_share','x_coord','y_coord']
+
+fig, ax = plt.subplots(figsize=(8, 6),dpi=160)
+
+shap.summary_plot(shap_interaction_values, X_coords, max_display=15, 
+                  feature_names = X_names,
+                  plot_type="compact_dot")
+```
