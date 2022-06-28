@@ -179,31 +179,135 @@ y[['ScenicQuality']] = y[['ScenicQuality']].replace(scale_mapper).astype('int')
 
 # X, y = split_consultant(landmap)
 print(y.shape, X.shape)
+X.head()
+y.head()
 # EDA_plot(y, X)
 
-ratio = 0.8
 from sklearn.model_selection import train_test_split
 # Create train/test split
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1 - ratio, train_size=ratio, random_state=19, stratify=y)
-```
-## Hyperparameter Tuning
-```{python}
-%%time
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2046, stratify=y)
 
-# Choose hyperparameter domain to search over
+```
+
+## Hyperparameter Tuning
+
+The optimization process consists of 4 parts which are as follows:
+
+#### 1. Initialize domain space for range of values
+
+The domain space is the input values over which we want to search.
+
+Choose hyperparameter domain to search over
+
+-   `eta` [0,1] is analogous to learning rate in GBM conceived as the step size shrinkage.
+
+-   `n_estimators` [X/L/C]: no. of boosting iterations
+
+-   `gamma` [0,∞] specifies the minimum loss reduction required to make a split.
+
+-   `max_depth` [0,∞] refers to the maximum depth of a tree, same as GBM, which is used to control over-fitting as higher depth will allow model to learn relations very specific to a particular sample.
+
+-   `min_child_weight` [0,∞] is similar to min_child_leaf in GBM but not exactly which refers to min 'sum of weights' of observations while GBM has min 'number of observations.'
+
+-   `max_delta_step` [0,∞] is usually not needed, but it might help in logistic regression when class is extremely imbalanced.
+
+-   `subsample` [0,1] denotes the fraction of observations to be randomly samples for each tree.
+
+-   `colsample_bytree`
+
+-   `lamda` denotes L2 regularization term on weights (analogous to Ridge regression).
+
+-   `alpha` denotes L1 regularization term on weights (analogous to Lasso regression), which can be used in case of very high dimensionality so that the algorithm runs faster when implemented.
+
+-   `tree_method`
+
+-   `scale_pos_weight`
+
+-   `max_leaves`
+
+```{python}
+%time
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+import numpy as np
+
+# configuration spaces/structures using dictionary container type
 space = {
-  
-         'max_depth':hp.choice('max_depth', np.arange(1, 30, 1, dtype=int)),
-  'colsample_bytree':hp.quniform('colsample_bytree', 0.3, 1.01, 0.05),
-  'min_child_weight':hp.choice('min_child_weight', np.arange(1, 30, 1, dtype=int)),
-         'subsample':hp.quniform('subsample', 0.3, 1.01, 0.05),
-     'learning_rate':hp.choice('learning_rate',    np.arange(0.05, 1.01, 0.05)),
-             'gamma': hp.quniform('gamma', 0.1, 5, 0.05),
-         # 'objective':'reg:squarederror',
+  # General Parameters
+           'booster': 'gbtree',
+     # 'boosting_type': hp.choice('boosting_type', ['gbdt', 'dart']),
+     #     'verbosity':
+     #       'nthread': 
+             
+  # Booster Parameters      
+               'eta': hp.uniform('eta', 0.01, 1.01),
+             'gamma': hp.quniform('gamma', 0.1, 5, 0.05), 
+         'max_depth': hp.choice('max_depth', np.arange(1, 30, 1, dtype=int)),
+  'min_child_weight': hp.choice('min_child_weight', np.arange(1, 30, 1, dtype=int)),     
+         'subsample': hp.quniform('subsample', 0.3, 1.01, 0.05),
+  'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1.0),
+             'lamda': hp.uniform('lambda', 0.0, 1.0),
+             'alpha': hp.quniform('alpha', 40, 180, 1),
+  #      'tree_method': 
+  # 'scale_pos_weight':
+  #       'max_leaves':
+          
+      # 'n_estimators': hp.quniform('n_estimators', 5, 35, 1),
+        # 'num_leaves': hp.quniform('num_leaves', 5, 50, 1),
+     
+          
+  # Learning Task Parameters  
          'objective': 'multi:softmax',
-       'eval_metric': 'rmse',
+       'eval_metric': 'mlogloss',
+              'seed': 2046
     }
+
+# Sample values from these configuration spaces using the routines in hyperopt.pyll.stochastic
+from hyperopt.pyll.stochastic import sample
+space = {'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(1))}
+print(sample(space))
+```
+
+#### 2. Define objective function
+
+The objective function can be any function which returns a real value that we want to minimize. In this case, we want to minimize the validation error of a machine learning model with respect to the hyperparameters. If the real value is accuracy, then we want to maximize it. Then the function should return the negative of that metric.
+
+```{python}
+from sklearn.model_selection import cross_val_score
+from hyperopt import STATUS_OK
+import lightgbm as lgb
+
+def objective_function(params):
+    clf = lgb.LGBMClassifier(**params)
+    score = cross_val_score(clf, X_train, y_train, cv=5).mean()
+    return {'loss': -score, 'status': STATUS_OK} 
+  
+
+def score(params):
+    model = XGBRegressor(**params)
+    
+    model.fit(X_train, Y_train, eval_set=[(X_train, Y_train), (X_valid, Y_valid)],
+              verbose=False, early_stopping_rounds=10)
+    Y_pred = model.predict(X_valid).clip(0, 20)
+    score = sqrt(mean_squared_error(Y_valid, Y_pred))
+    print(score)
+    return {'loss': score, 'status': STATUS_OK}    
+    
+def optimize(trials, space):
+    
+    best = fmin(score, space, algo=tpe.suggest, max_evals=1000)
+    return best
+  
+trials = Trials()
+best_params = optimize(trials, space)
+
+# Return the best parameters
+space_eval(space, best_params)
+  
+```
+
+From Li Ziqi
+
+```{python}
 
 def score(params, n_folds=5):
     
@@ -224,6 +328,23 @@ def optimize(trials, space):
                 rstate=np.random.RandomState(333))#Add seed to fmin function
     return best
 ```
+
+#### 3. Optimization algorithm
+
+It is the method used to construct the surrogate objective function and choose the next values to evaluate.
+
+Hyperopt has the TPE option along with random search. During optimization, the TPE algorithm constructs the probability model from the past results and decides the next set of hyperparameters to evaluate in the objective function by maximizing the expected improvement.
+
+```{python}
+# Step 3: Optimization algorithm (Tree Parzen Estimator, tpe)
+from hyperopt import tpe
+
+tpe_algorithm = tpe.suggest
+```
+
+#### 4. Results
+
+Results are score or value pairs that the algorithm uses to build the model.
 
 ## Fit xgboost model
 
@@ -273,7 +394,9 @@ print("Kappa: %.2f%%" % (kappa))
 # save to JSON
 model.save_model("/Users/mac/PycharmProjects/XGBoost/models/model_A.json")
 ```
+
 ## SHAP analysis of xgboost results
+
 ```{python}
 explainer_shap = shap.TreeExplainer(final_model)
 shap_values = explainer_shap(X_coords)
