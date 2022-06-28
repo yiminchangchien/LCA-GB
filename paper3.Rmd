@@ -272,6 +272,31 @@ print(sample(space))
 The objective function can be any function which returns a real value that we want to minimize. In this case, we want to minimize the validation error of a machine learning model with respect to the hyperparameters. If the real value is accuracy, then we want to maximize it. Then the function should return the negative of that metric.
 
 ```{python}
+# https://notebooks.githubusercontent.com/view/ipynb?browser=chrome&color_mode=auto&commit=daa2504c337a74778632d44834209425cb6d357f&device=unknown&enc_url=68747470733a2f2f7261772e67697468756275736572636f6e74656e742e636f6d2f4d696c6164536861686964692f46726175642d446574656374696f6e2d5847426f6f73742f646161323530346333333761373437373836333264343438333432303934323563623664333537662f5847426f6f73745f46726175645f446574656374696f6e2e6970796e62&logged_in=false&nwo=MiladShahidi%2FFraud-Detection-XGBoost&path=XGBoost_Fraud_Detection.ipynb&platform=android&repository_id=152300978&repository_type=Repository&version=98
+def objective(params, X, y, X_early_stop, y_early_stop, scorer, n_folds = 10):
+
+    pos_count = y_train.sum()
+    neg_count = len(y_train) - pos_count
+    imbalance_ratio = neg_count / pos_count
+    
+    xgb_clf = XGBClassifier(**params, scale_pos_weight=imbalance_ratio,
+                            n_estimators = 2000, n_jobs = 1)
+
+    xgb_fit_params = {'early_stopping_rounds': 50,
+                      'eval_metric': ['logloss'],
+                      'eval_set': [(X_early_stop, y_early_stop)],
+                      'verbose': False
+                      }
+    
+    cv_score = np.mean(cross_val_score(xgb_clf, X_train, y_train, cv = n_folds,
+                               fit_params = xgb_fit_params, n_jobs = -1,
+                               scoring = scorer))
+    
+    # hypoeropt minimizes the loss, hence the minus sign behind cv_score
+    return {'loss': -cv_score, 'status': hyperopt.STATUS_OK, 'params': params}
+```
+
+```{python}
 from sklearn.model_selection import cross_val_score
 from hyperopt import STATUS_OK
 import lightgbm as lgb
