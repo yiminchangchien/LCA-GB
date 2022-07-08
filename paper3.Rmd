@@ -193,7 +193,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 
 The optimization process consists of 4 parts which are as follows:
 
-#### 1. Initialize domain space for range of values
+#### 1. Define a search space
 
 The domain space is the input values over which we want to search.
 
@@ -267,73 +267,35 @@ space = {'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(1)
 print(sample(space))
 ```
 
-#### 2. Define objective function
+#### 2. Define an objective function
 
 The objective function can be any function which returns a real value that we want to minimize. In this case, we want to minimize the validation error of a machine learning model with respect to the hyperparameters. If the real value is accuracy, then we want to maximize it. Then the function should return the negative of that metric.
 
 ```{python}
 import xgboost as xgb
+from sklearn.metrics import cohen_kappa_score
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+
 
 # https://notebooks.githubusercontent.com/view/ipynb?browser=chrome&color_mode=auto&commit=daa2504c337a74778632d44834209425cb6d357f&device=unknown&enc_url=68747470733a2f2f7261772e67697468756275736572636f6e74656e742e636f6d2f4d696c6164536861686964692f46726175642d446574656374696f6e2d5847426f6f73742f646161323530346333333761373437373836333264343438333432303934323563623664333537662f5847426f6f73745f46726175645f446574656374696f6e2e6970796e62&logged_in=false&nwo=MiladShahidi%2FFraud-Detection-XGBoost&path=XGBoost_Fraud_Detection.ipynb&platform=android&repository_id=152300978&repository_type=Repository&version=98
-def objective(params, X = X_train, y = y_train, X_early_stop = 100, y_early_stop = 100, n_folds = 10):
+def objective(params, X_train = X_train, y_train = y_train, X_test = X_test, y_test = y_test):
 
-    # pos_count = y_train.sum()
-    # neg_count = len(y_train) - pos_count
-    # imbalance_ratio = neg_count / pos_count
+    model = xgb.XGBClassifier(params,
+                              eval_metric = "rmse", 
+                              n_estimators = 2000)
     
-    xgb_clf = xgb.Classifier(**params, n_estimators = 2000, n_jobs = 1)
-
-    xgb_fit_params = {'early_stopping_rounds': 50,
-                      'eval_metric': ['logloss'],
-                      'eval_set': [(X_early_stop, y_early_stop)],
-                      'verbose': True
-                      }
+    model.fit(X_train, y_train)
     
-    # cv_score = np.mean(cross_val_score(xgb_clf, X_train, y_train, cv = n_folds,
-    #                            fit_params = xgb_fit_params, n_jobs = -1,
-    #                            scoring = scorer))
+    y_pred = model.predict(X_test)
+    score = np.mean(cohen_kappa_score(y_test, y_pred))
     
-    cv_score = np.mean(cohen_kappa_score(xgb_clf,
-                                         X_train, 
-                                         y_train, 
-                                         cv = n_folds, 
-                                         fit_params = xgb_fit_params, 
-                                         n_jobs = -1, 
-                                         scoring = scorer)
-                       )                           
-    
-    # hypoeropt minimizes the loss, hence the minus sign behind cv_score
-    return {'loss': cv_score, 'status': hyperopt.STATUS_OK, 'params': params}
-
-```
-
-```{python}
-# Classifier:
-def hyperparameter_tuning(space):
-    model = xgb.XGBClassifier(n_estimators = space['n_estimators'], 
-                              max_depth = int(space['max_depth']), 
-                              gamma = space['gamma'],
-                              reg_alpha = int(space['reg_alpha']),
-                              min_child_weight = space['min_child_weight'],
-                              colsample_bytree=space['colsample_bytree'])
-                         
-    evaluation = [( x_train, y_train), ( x_test, y_test)]
-    
-    model.fit(x_train, y_train,
-            eval_set=evaluation, eval_metric="rmse",
-            early_stopping_rounds=10,verbose=False)
-
-    pred = model.predict(x_test)
-    accuracy = accuracy_score(y_test, pred>0.5)
-    print ("SCORE:", accuracy)
-    #change the metric if you like
-    return {'loss': -accuracy, 'status': STATUS_OK, 'model': model}
-
+    return {'loss': score, 'status': STATUS_OK}
+  
 ```
 
 ##### Implementing/Choosing the evaluation metric:
 
-#### 3. Optimization algorithm (Tree Parzen Estimator, tpe)
+#### 3. Minimize the objective over the space
 
 It is the method used to construct the surrogate objective function and choose the next values to evaluate.
 
@@ -346,30 +308,15 @@ We now need to put these together and call Hyperopt's optimization function, fmi
 The fmin function minimzes the objective function over the paramter space defined by param_space (described below). It takes a Trials object to store the results of all iterations, which can be used later to gain insights about the search process and results. For more about this (and Tree-structured Parzen Estimator, TPE, which Hyperopt uses internally for optimization) see Hyperopt documentation.
 
 ```{python}
-def tune_xgb(param_space, X_train, y_train, X_early_stop = 100, y_early_stop = 100, n_iter = 100):    
-    # scorer = make_scorer(conditional_recall_score, needs_proba=True)
+from hyperopt import fmin, tpe
 
-    # hyperopt.fmin will only pass the parameter values to objective. So we need to
-    # create a partial function to bind the rest of the arguments we want to pass to objective
-    # obj = partial(objective,
-    #               # scorer = scorer,
-    #               X = X_train,
-    #               y = y_train,
-    #               X_early_stop = X_early_stop,
-    #               y_early_stop = y_early_stop)
-
-    # A trials object that will store the results of all iterations
-    trials = Trials()
-    
-    fmin(fn = objective, 
-         space = param_space, 
-         algo = tpe.suggest, 
-         max_evals = n_iter, 
-         trials = trials)
-    
-    # returns the values of parameters from the best trial
-    return trials.best_trial['result']['params']
-  
+trials = Trials()
+best = fmin(fn = objective,
+            space = param_space,
+            algo = tpe.suggest, 
+            max_evals = 10)
+            
+print(best)
 ```
 
 ```{python}
