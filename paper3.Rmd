@@ -200,37 +200,27 @@ The domain space is the input values over which we want to search.
 Choose hyperparameter domain to search over
 
 -   `eta` [0,1] is analogous to learning rate in GBM conceived as the step size shrinkage.
-
 -   `n_estimators` [X/L/C]: no. of boosting iterations
-
 -   `gamma` [0,∞] specifies the minimum loss reduction required to make a split.
-
 -   `max_depth` [0,∞] refers to the maximum depth of a tree, same as GBM, which is used to control over-fitting as higher depth will allow model to learn relations very specific to a particular sample.
-
 -   `min_child_weight` [0,∞] is similar to min_child_leaf in GBM but not exactly which refers to min 'sum of weights' of observations while GBM has min 'number of observations.'
-
 -   `max_delta_step` [0,∞] is usually not needed, but it might help in logistic regression when class is extremely imbalanced.
-
 -   `subsample` [0,1] denotes the fraction of observations to be randomly samples for each tree.
-
 -   `colsample_bytree`
-
 -   `lamda` denotes L2 regularization term on weights (analogous to Ridge regression).
-
 -   `alpha` denotes L1 regularization term on weights (analogous to Lasso regression), which can be used in case of very high dimensionality so that the algorithm runs faster when implemented.
-
 -   `tree_method`
-
 -   `scale_pos_weight`
-
 -   `max_leaves`
 
 ```{python}
-#%time
+# -- hyperopt for optimising a 
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
+from sklearn.metrics import cohen_kappa_score
 import numpy as np
+import xgboost as xgb
 
-# configuration spaces/structures using dictionary container type
+# -- define a search space
 param_space = {
   # General Parameters
            'booster': 'gbtree',
@@ -245,82 +235,49 @@ param_space = {
   'min_child_weight': hp.choice('min_child_weight', np.arange(1, 30, 1, dtype=int)),     
          'subsample': hp.quniform('subsample', 0.3, 1.01, 0.05),
   'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1.0),
-             'lamda': hp.uniform('lambda', 0.0, 1.0),
-             'alpha': hp.quniform('alpha', 40, 180, 1),
-  #      'tree_method': 
+        'reg_lambda': hp.uniform('reg_lambda', 0.0, 1.0),
+         'reg_alpha': hp.quniform('reg_alpha', 40, 180, 1),
+  #      'tree_method': 'hist','gpu_hist',  # Use GPU accelerated algorithm
   # 'scale_pos_weight':
   #       'max_leaves':
+  #     'n_estimators': hp.quniform('n_estimators', 5, 35, 1),
+  #       'num_leaves': hp.quniform('num_leaves', 5, 50, 1),
+  #        'predictor': 'cpu_predictor'
           
-      # 'n_estimators': hp.quniform('n_estimators', 5, 35, 1),
-        # 'num_leaves': hp.quniform('num_leaves', 5, 50, 1),
-     
-          
-  # Learning Task Parameters  
-         'objective': 'multi:softmax',
-       'eval_metric': 'mlogloss',
+  # Learning Task Parameters
+         'num_class': 4,                   # Number of possible output classes
+         'objective': 'multi:softmax',     # Specify multiclass classification
+       'eval_metric': 'merror',
               'seed': 2046
     }
 
 # Sample values from these configuration spaces using the routines in hyperopt.pyll.stochastic
-from hyperopt.pyll.stochastic import sample
-space = {'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(1))}
-print(sample(space))
+# from hyperopt.pyll.stochastic import sample
+# space = {'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(1))}
+# print(sample(space))
 ```
 
-#### 2. Define an objective function
+#### 2. Define an objective/loss/cost function
 
 The objective function can be any function which returns a real value that we want to minimize. In this case, we want to minimize the validation error of a machine learning model with respect to the hyperparameters. If the real value is accuracy, then we want to maximize it. Then the function should return the negative of that metric.
 
 ```{python}
-import xgboost as xgb
-from sklearn.metrics import cohen_kappa_score
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
-
-# https://notebooks.githubusercontent.com/view/ipynb?browser=chrome&color_mode=auto&commit=daa2504c337a74778632d44834209425cb6d357f&device=unknown&enc_url=68747470733a2f2f7261772e67697468756275736572636f6e74656e742e636f6d2f4d696c6164536861686964692f46726175642d446574656374696f6e2d5847426f6f73742f646161323530346333333761373437373836333264343438333432303934323563623664333537662f5847426f6f73745f46726175645f446574656374696f6e2e6970796e62&logged_in=false&nwo=MiladShahidi%2FFraud-Detection-XGBoost&path=XGBoost_Fraud_Detection.ipynb&platform=android&repository_id=152300978&repository_type=Repository&version=98
+# -- define an objective function
 def objective(params, X_train = X_train, y_train = y_train, X_test = X_test, y_test = y_test):
-
-    model = xgb.XGBClassifier(params,
-                             # eval_metric = "rmse", 
-                              n_estimators = 2000)
-    
+    model = xgb.XGBClassifier(**params)
     model.fit(X_train, y_train,
-              eval_metric = 'auc')
-    
+              eval_set = [(X_train, y_train), (X_test, y_test)])
     y_pred = model.predict(X_test)
     score = np.mean(cohen_kappa_score(y_test, y_pred))
-    
+    # -- return more than just the objective value
     return {'loss': score, 'status': STATUS_OK}
-  
-```
-
-```{python}
-def objective(space):
-    clf=xgb.XGBClassifier(n_estimators =space['n_estimators'], 
-                          max_depth = int(space['max_depth']), 
-                          gamma = space['gamma'],
-                          reg_alpha =  int(space['reg_alpha']),
-                          min_child_weight=int(space['min_child_weight']),
-                          colsample_bytree=int(space['colsample_bytree']))
-    
-    evaluation = [( X_train, y_train), ( X_test, y_test)]
-    
-    clf.fit(X_train, y_train,
-            eval_set=evaluation, eval_metric="auc",
-            early_stopping_rounds=10,verbose=False)
-    
-
-    pred = clf.predict(X_test)
-    accuracy = accuracy_score(y_test, pred>0.5)
-    print ("SCORE:", accuracy)
-    return {'loss': -accuracy, 'status': STATUS_OK }
-
 ```
 
 ##### Implementing/Choosing the evaluation metric:
 
-#### 3. Minimize the objective over the space
+#### 3. Minimize the objective over the space (optimisation algorithm)
 
-It is the method used to construct the surrogate objective function and choose the next values to evaluate.
+It is the method used to construct the surrogate objective function and choose the next values to evaluate. The optimization algorithm is based on the Sequential Model-Based Global Optimization (SMBO) methodology with the variants given by the Gaussian Processes (GP), Tree of Parzen Estimators (TPE) and Adaptive Tree of Parzen Estimators (ATPE) algorithms.
 
 Hyperopt has the TPE option along with random search. During optimization, the TPE algorithm constructs the probability model from the past results and decides the next set of hyperparameters to evaluate in the objective function by maximizing the expected improvement.
 
@@ -331,165 +288,26 @@ We now need to put these together and call Hyperopt's optimization function, fmi
 The fmin function minimzes the objective function over the paramter space defined by param_space (described below). It takes a Trials object to store the results of all iterations, which can be used later to gain insights about the search process and results. For more about this (and Tree-structured Parzen Estimator, TPE, which Hyperopt uses internally for optimization) see Hyperopt documentation.
 
 ```{python}
-from hyperopt import fmin, tpe
-
-trials = Trials()
-best = fmin(fn = objective,
-            space = param_space,
-            algo = tpe.suggest, 
-            max_evals = 10)
-            
-print(best)
-```
-
-```{python}
-tune_xgb(param_space, X_train, y_train, 100, 100, 100)
-```
-
-```{python}
-trials = Trials()
-best = fmin(fn=hyperparameter_tuning,
-            space=space,
-            algo=tpe.suggest,
-            max_evals=100,
-            trials=trials)
-
-print (best)
-
-```
-
-Tuning hyper-parameters of the XGBoost classifier using Bayesian Optimization
-
-```{python}
-
-if __name__ == "__main__":    
-    # Loading the data
-    data = pd.read_csv('creditcard.csv')
-    X = data.drop('Class', axis = 1)
-    y = data['Class']
-    
-    # Train/test split, 80/20, random_state set for reproduibility
-    X_train, X_test, y_train, y_test = train_test_split(X, y, stratify = y, test_size = 0.2, random_state = 1)
-
-    # Further splitting the initial training set so that 10% of all data(1/8 of 80%) 
-    # can be used as the evaluation set by XGBoost for early stopping
-    X_train, X_early_stop, y_train, y_early_stop = train_test_split(X_train, y_train, stratify = y_train, test_size = 1/8, random_state = 1)
-    
-    # The prior probability distribution of parameters for Bayesian optimization
-    
-    param_space = {
-  # General Parameters
-           'booster': 'gbtree',
-     # 'boosting_type': hp.choice('boosting_type', ['gbdt', 'dart']),
-     #     'verbosity':
-     #       'nthread': 
-             
-  # Booster Parameters      
-               'eta': hp.uniform('eta', 0.01, 1.01),
-             'gamma': hp.quniform('gamma', 0.1, 5, 0.05), 
-         'max_depth': hp.choice('max_depth', np.arange(1, 30, 1, dtype=int)),
-  'min_child_weight': hp.choice('min_child_weight', np.arange(1, 30, 1, dtype=int)),     
-         'subsample': hp.quniform('subsample', 0.3, 1.01, 0.05),
-  'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1.0),
-             'lamda': hp.uniform('lambda', 0.0, 1.0),
-             'alpha': hp.quniform('alpha', 40, 180, 1),
-  #      'tree_method': 
-  # 'scale_pos_weight':
-  #       'max_leaves':
-          
-      # 'n_estimators': hp.quniform('n_estimators', 5, 35, 1),
-        # 'num_leaves': hp.quniform('num_leaves', 5, 50, 1),
-     
-          
-  # Learning Task Parameters  
-         'objective': 'multi:softmax',
-       'eval_metric': 'mlogloss',
-              'seed': 2046
-    }
-    
-    
-    param_space = {
-            'learning_rate': hyperopt.hp.loguniform('learning_rate', np.log(0.01), np.log(0.2)),
-            'subsample': hyperopt.hp.uniform('subsample', 0.25, 1),
-            'colsample_bytree': hyperopt.hp.uniform('colsample_bytree', 0.7, 1.0),
-            'min_child_weight': hyperopt.hp.choice('min_child_weight', [1, 3, 5, 7]),
-            'reg_alpha': hyperopt.hp.uniform('reg_alhpa', 0, 1.0),
-            # Avoiding lambda = 0. There is a Github issue on strange behaviour with lambda = 0
-            'reg_lambda': hyperopt.hp.uniform('reg_lambda', 0.01, 1.0),
-            }
-      
-      
-      from hyperopt.pyll.stochastic import sample
-space = {'subsample': hp.uniform('subsample', 0.25, 1)}
-print(sample(space))
-      
-      
-      
-      
-      best_params = tune_xgb(param_space, X_train, y_train, X_early_stop, y_early_stop, n_iter = 150)
-      print('\tThe best hyper-parameters found:\n')print(*['\t\t%s = %s' % (k, str(round(v, 4))) for k, v in best_params.items()], sep='\n')
-```
-
-other references
-
-```{python}
-from sklearn.model_selection import cross_val_score
-from hyperopt import STATUS_OK
-import lightgbm as lgb
-
-def objective_function(params):
-    clf = lgb.LGBMClassifier(**params)
-    score = cross_val_score(clf, X_train, y_train, cv=5).mean()
-    return {'loss': -score, 'status': STATUS_OK} 
-  
-
-def score(params):
-    model = XGBRegressor(**params)
-    
-    model.fit(X_train, Y_train, eval_set=[(X_train, Y_train), (X_valid, Y_valid)],
-              verbose=False, early_stopping_rounds=10)
-    Y_pred = model.predict(X_valid).clip(0, 20)
-    score = sqrt(mean_squared_error(Y_valid, Y_pred))
-    print(score)
-    return {'loss': score, 'status': STATUS_OK}    
-    
+# -- optimize it using algorithm of choice
 def optimize(trials, space):
-    
-    best = fmin(score, space, algo=tpe.suggest, max_evals=1000)
+    best = fmin(fn = objective,
+                space = param_space, 
+                algo = tpe.suggest,    # the optimisation algorithm
+                max_evals = 10,        # the number of iteration
+                trials = trials)       # the trials database for fmin
     return best
-  
+
+# -- create a Trials database to store experiment results
 trials = Trials()
-best_params = optimize(trials, space)
+best_params = optimize(trials, param_space)
 
 # Return the best parameters
-space_eval(space, best_params)
-  
+space_eval(param_space, best_params)
+
+# -- print out what we got!
+# for trial in trials.trials:
+#     print(trial)
 ```
-
-From Li Ziqi
-
-```{python}
-
-def score(params, n_folds=5):
-    
-    #Cross-validation
-    d_train = xgboost.DMatrix(X_coords,y)
-    
-    cv_results = xgboost.cv(params, d_train, nfold = n_folds, num_boost_round=500,
-                        early_stopping_rounds = 10, metrics = 'rmse', seed = 0)
-    
-    loss = min(cv_results['test-rmse-mean'])
-    
-    return loss
-
-
-def optimize(trials, space):
-    
-    best = fmin(score, space, algo=tpe.suggest, max_evals=2000,
-                rstate=np.random.RandomState(333))#Add seed to fmin function
-    return best
-```
-
 #### 4. Results
 
 Results are score or value pairs that the algorithm uses to build the model.
@@ -501,23 +319,9 @@ import xgboost as xgb
 # Specify sufficient boosting iterations to reach a minimum
 num_round = 1000 #209.91
 
-# Leave most parameters as default
-param = {'objective': 'multi:softmax',  # Specify multiclass classification
-         'num_class': 4,  # Number of possible output classes
-         # 'tree_method': 'gpu_hist',  # Use GPU accelerated algorithm
-         'eta': 0.451,
-         'max_depth': 12,
-         'gamma': 0,
-         'subsample': 0.758,
-         'colsample_bytree': 1,
-         'min_child_weight': 0.2,
-         'tree_method': 'hist',
-         'predictor': 'cpu_predictor'
-         }
-
 # Convert input data from numpy to XGBoost format
-dtrain = xgb.DMatrix(X_train, label=y_train)
-dtest = xgb.DMatrix(X_test, label=y_test)
+dtrain = xgb.DMatrix(X_train, label = y_train)
+ dtest = xgb.DMatrix(X_test, label = y_test)
 
 import time
 gpu_res = {}  # Store accuracy result
@@ -526,21 +330,32 @@ start = time.time()
 # Train model
 # model = xgb.train(param, dtrain, num_round, evals=[(dtest, 'test')], evals_result=gpu_res)
 # print("GPU Training Time: %s seconds" % (str(time.time() - start)))
-model = xgb.train(param, dtrain, num_round, evals=[(dtest, 'test')])
+
+best_params['num_class'] = 4
+best_params['objective'] = 'multi:softmax'
+best_params['eval_metric'] = 'merror'
+
+model = xgb.train(best_params,
+                  dtrain,
+                  num_round = 1000)
+                  #evals = [(dtrain, 'train'),(dtest, 'test')])
+                  
 print(time.time() - start)
+
+y_pred = model.predict(dtest)
 
 # Evaluate model using test data
 from sklearn.metrics import accuracy_score
-predictions = model.predict(dtest)
-accuracy = accuracy_score(y_test, predictions)
-print("Accuracy: %.2f%%" % (accuracy * 100.0))
 
+accuracy = accuracy_score(y_test, y_pred)
+print("Accuracy: %.2f%%" % (accuracy * 100.0))
+ 
 from sklearn.metrics import cohen_kappa_score
-kappa = cohen_kappa_score(y_test, predictions)
+kappa = cohen_kappa_score(y_test, y_pred)
 print("Kappa: %.2f%%" % (kappa))
 
 # save to JSON
-model.save_model("/Users/mac/PycharmProjects/XGBoost/models/model_A.json")
+# model.save_model("/Users/mac/PycharmProjects/XGBoost/models/model_A.json")
 ```
 
 ## SHAP analysis of xgboost results
