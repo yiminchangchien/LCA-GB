@@ -52,13 +52,8 @@ VS <- read_sf("http://lle.gov.wales/catalogue/item/LandmapVisualSensory.json") %
              Character = factor(VS_48, levels = c("Low", "Moderate", "High", "Outstanding")),
                 Rarity = factor(VS_49, levels = c("Low", "Moderate", "High", "Outstanding"))) 
 
-## Download the wildness measure and its components
-#"https://github.com/yiminchangchien/scenicness/blob/2a3f9b996c11a7c480867524664401dbea9aea2b/Wildness.RData" %>% url() %>%
-  
-load("C:\\Users\\00631\\Downloads\\James\\Wildness.RData")
-
 ## Download Scenic-Or-Not data
-sc <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
+sc1 <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
                col_types = cols("ID" = col_number(),
                                 "Lat" = col_double(),
                                 "Lon" = col_double(),
@@ -68,11 +63,47 @@ sc <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
                                 "Geograph URI" = col_character())) %>%
   rowwise() %>%
   mutate(Mean = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Median = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
          Variance = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% var(),
          Entropy = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
-         Number = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length())%>%
+         Number = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% length(),
+           `10` = Votes %>% strsplit(",") %>% unlist() %>% str_count("10") %>% sum(),
+            `9` = Votes %>% strsplit(",") %>% unlist() %>% str_count("9") %>% sum(),
+            `8` = Votes %>% strsplit(",") %>% unlist() %>% str_count("8") %>% sum(),
+            `7` = Votes %>% strsplit(",") %>% unlist() %>% str_count("7") %>% sum(),
+            `6` = Votes %>% strsplit(",") %>% unlist() %>% str_count("6") %>% sum(),
+            `5` = Votes %>% strsplit(",") %>% unlist() %>% str_count("5") %>% sum(),
+            `4` = Votes %>% strsplit(",") %>% unlist() %>% str_count("4") %>% sum(),
+            `3` = Votes %>% strsplit(",") %>% unlist() %>% str_count("3") %>% sum(),
+            `2` = Votes %>% strsplit(",") %>% unlist() %>% str_count("2") %>% sum(),
+            `1` = Votes %>% strsplit(",") %>% unlist() %>% str_count("1") %>% sum())%>%
+  mutate(`1` = `1`-`10`) %>%
   st_as_sf(coords = c("Lon","Lat"), crs = 4326) %>%
   st_transform(crs = 27700)
+```
+
+```{python}
+import math
+from scipy import stats
+
+def ci_lower_bound(positive_ratings, total_ratings, confidence):
+    """
+    Following http://www.evanmiller.org/how-not-to-sort-by-average-rating.html#changes
+    :return: the lower bound of the confidence interval
+    """
+    n =  total_ratings
+    z = stats.norm.ppf(1 - (1 - confidence) / 2)
+    p_hat = 1.0 * positive_ratings / n
+    result = (
+        (
+             p_hat + z * z / (2 * n)
+             - z * math.sqrt(
+                 (p_hat * (1 - p_hat) + z * z / (4 * n)) / n
+             )
+        ) / (1 + z * z / n)
+    )
+    return result
+
 ```
 
 ```{r}
@@ -83,12 +114,37 @@ LANDMAP <- sc %>%
   as_tibble() %>% 
   st_as_sf() %>%
   rowwise() %>%
-  mutate(Scenicness.median = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
-         Scenicness.mean = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.entropy = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
-         Scenicness.number = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length(),
-    Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
-  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, ScenicQuality, Consultant, Votes, Scenicness.median, Scenicness.mean, Scenicness.entropy, Scenicness.number) %>%
+  mutate(Scenicness.mean_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
+         Scenicness.entropy_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
+         Scenicness.number_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length()) %>%
+  ungroup()
+
+LANDMAP <- sc %>%
+  st_join(LANDMAP, .) %>%
+  aggregate(Median~UID, data = ., paste0, collapse = ",") %>%
+  merge(LANDMAP, ., by = "UID", all = T) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  rowwise() %>%
+  mutate(Scenicness.mean_of_median = Median %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_median = Median %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median()) %>%
+  ungroup()
+
+LANDMAP <- sc %>%
+  st_join(LANDMAP, .) %>%
+  aggregate(Mean~UID, data = ., paste0, collapse = ",") %>%
+  merge(LANDMAP, ., by = "UID", all = T) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  rowwise() %>%
+  mutate(Scenicness.mean_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
+         Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
+  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, ScenicQuality, Consultant, 
+                Votes, Scenicness.mean_all, Scenicness.median_all, Scenicness.entropy_all, Scenicness.number_all,
+                Scenicness.mean_of_median, Scenicness.median_of_median,
+                Scenicness.mean_of_mean, Scenicness.median_of_mean) %>%
   ungroup()
 
 plot(LANDMAP["ScenicQuality"], border = 'NA', key.pos = 1)  
@@ -105,32 +161,47 @@ LANDMAP <- st_transform(LANDMAP, crs = st_crs(Wildness)) %>%
   exact_extract(Wildness, ., fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), quantiles = c(0.25, 0.75)) %>%
   mutate(Wildness.iqr = q75 - q25) %>%
   dplyr::select(Wildness.mean = mean, Wildness.median = median, Wildness.iqr, Wildness.cv = coefficient_of_variation, Wildness.variance = variance) %>%
-  bind_cols(LANDMAP, .) %>%
+  bind_cols(LANDMAP[, 1:13], .) %>%
   st_transform(crs = 27700)
 
-
-landmap <- st_cast(LANDMAP, "POLYGON")
+landmap <- st_cast(LANDMAP, "POLYGON") %>%
+  dplyr::mutate(x = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 1],
+                y = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 2])
+summary(landmap)
 ```
 
 ```{r}
-library(reticulate)
+Sys.setenv("RETICULATE_PYTHON" = ".\\.venv\\Scripts\\python.exe")
+# Sys.getenv()
+Sys.which("Python")
 
+# py_discover_config()
+
+library(reticulate)
+# -- creates an interactive Python console, REPL (Read, Eval, Print Loop), within R.
+repl_python() 
+
+# reticulate::py_config() # why numpy_version couldn't be found?
+# use_python("Z:\\R\\R projects\\LCA-GB\\my_env_Python_3.9.13\\Scripts\\python.exe")
+# 
+# # use_virtualenv("Z:\\R\\R projects\\LCA-GB\\my_env_Python_3.9.13", required = TRUE)
+# 
+# install.packages("usethis")
+# usethis::edit_r_environ()
+# usethis::edit_r_profile()
 ```
 
 ```{python}
-
 import geopandas as gpd
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder
 from sklearn.compose import make_column_transformer
 
-
-# landmap = geopandas.read_file("/Users/mac/R/LCA-GB/Data/Input/LANDMAP.geojson")
 landmap = r.landmap
 landmap = landmap.dropna(subset=['ScenicQuality'])
 
 print(landmap)
-print(landmap.describe)
+landmap.describe()
 print(landmap['ScenicQuality'].value_counts())
 
 landmap.isnull().sum()
@@ -167,14 +238,22 @@ print(landmap_B.shape)
 #   sns.pairplot(landmap_concat, hue='ScenicQuality', palette='vlag', height=3)
 
 # split train/test set
-X = landmap.loc[:, ['Scenicness.mean']]
-y = landmap.loc[:, ['ScenicQuality']]
+# X = landmap_B.loc[:, ['Scenicness.median', 'Scenicness.entropy', 
+#                       'Wildness.median', 'Wildness.variance',
+#                       'x', 'y']]
+                      
+X = landmap_B.loc[:, ['Scenicness.mean', 'Wildness.mean']]
+y = landmap_B.loc[:, ['ScenicQuality']]
 
 # from sklearn.preprocessing import OrdinalEncoder
 # OE = OrdinalEncoder()
 # y[['Scale']] = OE.fit_transform(y[['ScenicQuality']])
 
-scale_mapper = {'Low': int(0), 'Moderate': int(1), 'High': int(2), 'Outstanding': int(3)} 
+scale_mapper = {'Low': int(0), 
+                'Moderate': int(1), 
+                'High': int(2), 
+                'Outstanding': int(3)}
+                
 y[['ScenicQuality']] = y[['ScenicQuality']].replace(scale_mapper).astype('int')
 
 # X, y = split_consultant(landmap)
@@ -183,12 +262,14 @@ X.head()
 y.head()
 # EDA_plot(y, X)
 
+
+# -- Create train/test split
 from sklearn.model_selection import train_test_split
-# Create train/test split
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=2046, stratify=y)
-
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    test_size = 0.2, 
+                                                    random_state = 2046, 
+                                                    stratify = y)
 ```
-
 ## Hyperparameter Tuning
 
 The optimization process consists of 4 parts which are as follows:
@@ -196,7 +277,6 @@ The optimization process consists of 4 parts which are as follows:
 #### 1. Define a search space
 
 The domain space is the input values over which we want to search.
-
 Choose hyperparameter domain to search over
 
 -   `eta` [0,1] is analogous to learning rate in GBM conceived as the step size shrinkage.
@@ -214,7 +294,7 @@ Choose hyperparameter domain to search over
 -   `max_leaves`
 
 ```{python}
-# -- hyperopt for optimising a 
+# -- hyperopt for optimising a XGBoost model
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 from sklearn.metrics import cohen_kappa_score
 import numpy as np
@@ -228,35 +308,35 @@ param_space = {
      #     'verbosity':
      #       'nthread': 
              
-  # Booster Parameters      
+  # Booster Parameters
+   'num_boost_round': hp.quniform('num_boost_round', 100, 1500, 0.001), 
                'eta': hp.uniform('eta', 0.01, 1.01),
-             'gamma': hp.quniform('gamma', 0.1, 5, 0.05), 
-         'max_depth': hp.choice('max_depth', np.arange(1, 30, 1, dtype=int)),
-  'min_child_weight': hp.choice('min_child_weight', np.arange(1, 30, 1, dtype=int)),     
-         'subsample': hp.quniform('subsample', 0.3, 1.01, 0.05),
-  'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1.0),
-        'reg_lambda': hp.uniform('reg_lambda', 0.0, 1.0),
-         'reg_alpha': hp.quniform('reg_alpha', 40, 180, 1),
-  #      'tree_method': 'hist','gpu_hist',  # Use GPU accelerated algorithm
-  # 'scale_pos_weight':
-  #       'max_leaves':
-  #     'n_estimators': hp.quniform('n_estimators', 5, 35, 1),
-  #       'num_leaves': hp.quniform('num_leaves', 5, 50, 1),
-  #        'predictor': 'cpu_predictor'
+             'gamma': 0, 
+         'max_depth': hp.choice('max_depth', np.arange(1, 10, 1, dtype=int)),
+  'min_child_weight': hp.quniform('min_child_weight', 0, 1, 0.1),     
+         'subsample': hp.quniform('subsample', 0.3, 1, 0.001),
+  'colsample_bytree': 1, #hp.uniform('colsample_bytree', 0.5, 1.01),
+ #       'reg_lambda': hp.uniform('reg_lambda', 0.0, 1.0),
+ #        'reg_alpha': hp.quniform('reg_alpha', 40, 180, 1),
+ #      'tree_method': 'hist','gpu_hist',  # Use GPU accelerated algorithm
+ # 'scale_pos_weight':
+ #       'max_leaves':
+ #     'n_estimators': hp.quniform('n_estimators', 5, 35, 1),
+ #       'num_leaves': hp.quniform('num_leaves', 5, 50, 1),
+ #        'predictor': 'cpu_predictor',
           
   # Learning Task Parameters
          'num_class': 4,                   # Number of possible output classes
-         'objective': 'multi:softmax',     # Specify multiclass classification
+         'objective': 'multi:softmax',     # Specify multi-class classification
        'eval_metric': 'merror',
-              'seed': 2046
+              'seed': 2022
     }
 
 # Sample values from these configuration spaces using the routines in hyperopt.pyll.stochastic
-# from hyperopt.pyll.stochastic import sample
-# space = {'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(1))}
-# print(sample(space))
+from hyperopt.pyll.stochastic import sample
+space = {'eta': hp.uniform('eta', 0.01, 1.01)}
+print(sample(space))
 ```
-
 #### 2. Define an objective/loss/cost function
 
 The objective function can be any function which returns a real value that we want to minimize. In this case, we want to minimize the validation error of a machine learning model with respect to the hyperparameters. If the real value is accuracy, then we want to maximize it. Then the function should return the negative of that metric.
@@ -293,7 +373,7 @@ def optimize(trials, space):
     best = fmin(fn = objective,
                 space = param_space, 
                 algo = tpe.suggest,    # the optimisation algorithm
-                max_evals = 10,        # the number of iteration
+                max_evals = 30,        # the number of iteration
                 trials = trials)       # the trials database for fmin
     return best
 
@@ -303,10 +383,6 @@ best_params = optimize(trials, param_space)
 
 # Return the best parameters
 space_eval(param_space, best_params)
-
-# -- print out what we got!
-# for trial in trials.trials:
-#     print(trial)
 ```
 #### 4. Results
 
@@ -316,64 +392,176 @@ Results are score or value pairs that the algorithm uses to build the model.
 
 ```{python}
 import xgboost as xgb
-# Specify sufficient boosting iterations to reach a minimum
-num_round = 1000 #209.91
+## Specify sufficient boosting iterations to reach a minimum
+## num_round = 1000
 
-# Convert input data from numpy to XGBoost format
+# -- convert input data from numpy to XGBoost format
 dtrain = xgb.DMatrix(X_train, label = y_train)
  dtest = xgb.DMatrix(X_test, label = y_test)
 
+# -- try previous combinations of hyperparameter set
+# Consultant A
+# param_space = {
+#            'booster': 'gbtree',
+#    'num_boost_round': 209.910,
+#                'eta': 0.451,
+#              'gamma': 0,
+#          'max_depth': 12,
+#   'min_child_weight': 0.2,
+#          'subsample': 0.758,
+#   'colsample_bytree': 1,
+#          'num_class': 4,
+#          'objective': 'multi:softmax',
+#        'eval_metric': 'merror',
+#               'seed': 2046
+#     }
+
+# Consultant B
+params = {
+          'booster': 'gbtree',
+        #'num_round': 1433.996,
+              'eta': 0.892,
+            'gamma': 0,
+        'max_depth': 4,
+ 'min_child_weight': 0.6,
+        'subsample': 0.500,
+ 'colsample_bytree': 1,
+        'num_class': 4,
+        'objective': 'multi:softmax',
+      'eval_metric': 'merror',
+             'seed': 1997
+  }
+
+# -- train model
 import time
-gpu_res = {}  # Store accuracy result
 start = time.time()
 
-# Train model
-# model = xgb.train(param, dtrain, num_round, evals=[(dtest, 'test')], evals_result=gpu_res)
-# print("GPU Training Time: %s seconds" % (str(time.time() - start)))
+model = xgb.train(space_eval(param_space, best_params), 
+                  dtrain, 
+                  num_boost_round = 500,
+                  evals = [(dtrain, 'train'), (dtest, 'test')],
+                  early_stopping_rounds = 250)
 
-best_params['num_class'] = 4
-best_params['objective'] = 'multi:softmax'
-best_params['eval_metric'] = 'merror'
+# model = xgb.train(params, 
+#                   dtrain, 
+#                   num_boost_round = 500, 
+#                   evals = [(dtrain, 'train'), (dtest, 'test')],
+#                   early_stopping_rounds = 250)
 
-model = xgb.train(best_params,
-                  dtrain,
-                  num_round = 1000)
-                  #evals = [(dtrain, 'train'),(dtest, 'test')])
+# model = xgb.cv(space_eval(param_space, best_params), dtrain, num_boost_round = 2000, nfold = 5, stratified = True)
+# model.head()
                   
-print(time.time() - start)
+print("XGBoost model training time: %s seconds" % (str(time.time() - start)))
 
 y_pred = model.predict(dtest)
 
-# Evaluate model using test data
+# -- evaluate model using test data
 from sklearn.metrics import accuracy_score
 
 accuracy = accuracy_score(y_test, y_pred)
 print("Accuracy: %.2f%%" % (accuracy * 100.0))
  
 from sklearn.metrics import cohen_kappa_score
-kappa = cohen_kappa_score(y_test, y_pred)
-print("Kappa: %.2f%%" % (kappa))
+kappa = cohen_kappa_score(y_pred, y_test)
+print("Kappa: %.2f" % (kappa))
 
-# save to JSON
-# model.save_model("/Users/mac/PycharmProjects/XGBoost/models/model_A.json")
+# -- save to JSON
+model.save_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
 ```
 
 ## SHAP analysis of xgboost results
 
 ```{python}
-explainer_shap = shap.TreeExplainer(final_model)
-shap_values = explainer_shap(X_coords)
+import shap
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import plot_confusion_matrix
 
-shap_interaction_values = shap.TreeExplainer(
-    final_model).shap_interaction_values(X_coords)
+# -- load the saved model
+model = xgb.XGBRegressor()
+model.load_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
+
+# -- view the confusion matrix
+class_names = ['Low', 'Moderate', 'High', 'Outstanding']
+disp = plot_confusion_matrix(model, X_test, y_test, 
+                             display_labels = class_names, 
+                             cmap = plt.cm.Blues, 
+                             xticks_rotation = 'vertical')
+
+# -- view the feature importance
+importances = model.feature_importances_
+indices = np.argsort(importances)
+features = X.columns
+
+fig, ax = plt.subplots()
+
+plt.title('Feature Importances')
+plt.barh(range(len(indices)), importances[indices], color='g', align='center')
+plt.yticks(range(len(indices)), [features[i] for i in indices])
+plt.xlabel('Relative Importance')
+plt.show()
+
+fig.set_size_inches(18.5, 10.5)
+fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\pyplot.png")
+plt.clf()
+
+# -- play shap
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X_test, approximate = True)
+shap.summary_plot(shap_values[0], X_test.values, feature_names = X_test.columns)
+fig.set_size_inches(18.5, 20.5)
+fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\shap.png")
+
+# -- first trial
+shap.initjs()
+shap_values = shap.TreeExplainer(model).shap_values(X_test)
+shap.summary_plot(shap_values, X_test)
+
+# -- second trial
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(X_test.iloc[:,:-1])
+shap_values = explainer.shap_values(scaled_data.iloc[0,:-1].values.reshape(1,-1))
+shap.force_plot(explainer.expected_value[0], shap_values[0], link='logit')  # repeat changing 0 for i in range(0, 5)
+
+# -- third trial
+shap.initjs()
+class_names = ['Low', 'Moderate', ' High', 'Outstanding']
+shap.summary_plot(shap_values, X_test, plot_type="bar", class_names= class_names, feature_names = ['Scenicness', 'Wildness'])
+
+# -- plot the global importance of each feature
+shap.plots.bar(explainer)
+
+# visualize the first prediction's explanation
+shap.force_plot(explainer.expected_value[0], shap_values[0])
+
+# fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
+# shap.summary_plot(shap_values)
+# # or 
+# shap.plots.beeswarm(shap_values)
+shap.summary_plot(shap_values[2], X_test)
+
+# fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
+shap.summary_plot(shap_values, X_test, plot_type="bar")
+
+shap_interaction_values = shap.TreeExplainer(model).shap_interaction_values(X_train)
     
-X_names = ['pct_18_34','pct_white','pct_bach',
-          'pct_no_car','log_pop_den','job_entropy','network_den',
-          'ave_trip_dist','pct_share','x_coord','y_coord']
+X_names = ['Scenicness.median','x_coord','y_coord']
 
-fig, ax = plt.subplots(figsize=(8, 6),dpi=160)
-
-shap.summary_plot(shap_interaction_values, X_coords, max_display=15, 
+shap.summary_plot(shap_interaction_values, X_train, max_display=15, 
                   feature_names = X_names,
-                  plot_type="compact_dot")
+                  plot_type = 'dot')
+                  # plot_type="compact_dot")
+                  
+import shap  # package used to calculate Shap values
+
+# Create object that can calculate shap values
+explainer = shap.TreeExplainer(my_model)
+
+# calculate shap values. This is what we will plot.
+# Calculate shap_values for all of val_X rather than a single row, to have more data for plot.
+shap_values = explainer.shap_values(val_X)
+
+# Make plot. Index of [1] is explained in text below.
+shap.summary_plot(shap_values[1], val_X)                  
 ```
