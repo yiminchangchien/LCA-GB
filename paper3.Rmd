@@ -28,6 +28,35 @@ invisible(lapply(packages, library, character.only = TRUE))
 
 rm(list = c("installed_packages", "packages"))
 ```
+## Bayesian XXX by Evan Miller
+Where zα/2 is the 1−α/2 quantile of a normal distribution.
+
+```{r Bayesian Ranking}
+"
+Following https://www.evanmiller.org/ranking-items-with-star-ratings.html
+return: the lower bound of the confidence interval
+"
+BayesRank <- function(votes, K, α = .05){
+  N = votes %>% strsplit(",") %>% unlist() %>% length() # total_ratings
+  s_k = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) %>% array(dim = c(1, 10))
+  n_k = votes %>%
+    strsplit(",") %>% 
+    unlist() %>%
+    as.numeric() %>%
+    tabulate(nbins = 10) %>%
+    array(dim = c(10, 1))
+  # 1-α: confidence level (commonly 90%, 95% or 99%)
+  # confidence level 90%: α = 0.1  -> z_α/2 = z_0.05 = 1.645
+  # confidence level 95%: α = 0.05 -> z_α/2 = z_0.025= 1.96
+  # confidence level 99%: α = 0.01 -> z_α/2 = z_0.005= 2.576
+  # z is the standard normal random variable. z_α/2 is the α/2 quantile of its distribution which means     critical value.
+  z = qnorm(1-α/2)
+  S = s_k %*% (n_k + 1)/(N + K) - 
+  z*sqrt((s_k^2 %*% (n_k + 1)/(N + K) - (s_k %*% (n_k + 1)/(N + K))^2)/(N + K + 1))
+  S = as.numeric(S)
+  return(S)
+}
+```
 
 ```{r}
 #### Data preparation
@@ -53,7 +82,7 @@ VS <- read_sf("http://lle.gov.wales/catalogue/item/LandmapVisualSensory.json") %
                 Rarity = factor(VS_49, levels = c("Low", "Moderate", "High", "Outstanding"))) 
 
 ## Download Scenic-Or-Not data
-sc1 <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
+sc <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
                col_types = cols("ID" = col_number(),
                                 "Lat" = col_double(),
                                 "Lon" = col_double(),
@@ -66,44 +95,9 @@ sc1 <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
          Median = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
          Variance = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% var(),
          Entropy = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
-         Number = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% length(),
-           `10` = Votes %>% strsplit(",") %>% unlist() %>% str_count("10") %>% sum(),
-            `9` = Votes %>% strsplit(",") %>% unlist() %>% str_count("9") %>% sum(),
-            `8` = Votes %>% strsplit(",") %>% unlist() %>% str_count("8") %>% sum(),
-            `7` = Votes %>% strsplit(",") %>% unlist() %>% str_count("7") %>% sum(),
-            `6` = Votes %>% strsplit(",") %>% unlist() %>% str_count("6") %>% sum(),
-            `5` = Votes %>% strsplit(",") %>% unlist() %>% str_count("5") %>% sum(),
-            `4` = Votes %>% strsplit(",") %>% unlist() %>% str_count("4") %>% sum(),
-            `3` = Votes %>% strsplit(",") %>% unlist() %>% str_count("3") %>% sum(),
-            `2` = Votes %>% strsplit(",") %>% unlist() %>% str_count("2") %>% sum(),
-            `1` = Votes %>% strsplit(",") %>% unlist() %>% str_count("1") %>% sum())%>%
-  mutate(`1` = `1`-`10`) %>%
+         BayeScore = Votes %>% BayesRank(K = 10, α = .05))%>%
   st_as_sf(coords = c("Lon","Lat"), crs = 4326) %>%
   st_transform(crs = 27700)
-```
-
-```{python}
-import math
-from scipy import stats
-
-def ci_lower_bound(positive_ratings, total_ratings, confidence):
-    """
-    Following http://www.evanmiller.org/how-not-to-sort-by-average-rating.html#changes
-    :return: the lower bound of the confidence interval
-    """
-    n =  total_ratings
-    z = stats.norm.ppf(1 - (1 - confidence) / 2)
-    p_hat = 1.0 * positive_ratings / n
-    result = (
-        (
-             p_hat + z * z / (2 * n)
-             - z * math.sqrt(
-                 (p_hat * (1 - p_hat) + z * z / (4 * n)) / n
-             )
-        ) / (1 + z * z / n)
-    )
-    return result
-
 ```
 
 ```{r}
@@ -114,10 +108,10 @@ LANDMAP <- sc %>%
   as_tibble() %>% 
   st_as_sf() %>%
   rowwise() %>%
-  mutate(Scenicness.mean_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.median_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
-         Scenicness.entropy_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
-         Scenicness.number_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length()) %>%
+  mutate(Scenicness.mean_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
+         Scenicness.entropy_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
+         Scenicness.number_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length()) %>%
   ungroup()
 
 LANDMAP <- sc %>%
@@ -139,15 +133,22 @@ LANDMAP <- sc %>%
   st_as_sf() %>%
   rowwise() %>%
   mutate(Scenicness.mean_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.median_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
-         Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
-  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, ScenicQuality, Consultant, 
-                Votes, Scenicness.mean_all, Scenicness.median_all, Scenicness.entropy_all, Scenicness.number_all,
-                Scenicness.mean_of_median, Scenicness.median_of_median,
-                Scenicness.mean_of_mean, Scenicness.median_of_mean) %>%
+         Scenicness.median_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median()) %>%
   ungroup()
 
-plot(LANDMAP["ScenicQuality"], border = 'NA', key.pos = 1)  
+LANDMAP <- sc %>%
+  st_join(LANDMAP, .) %>%
+  aggregate(BayeScore~UID, data = ., paste0, collapse = ",") %>%
+  merge(LANDMAP, ., by = "UID", all = T) %>%
+  as_tibble() %>%
+  st_as_sf() %>%
+  rowwise() %>%
+  mutate(Scenicness.mean_of_bayescore = BayeScore %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_bayescore = BayeScore %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
+         Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
+  ungroup()
+
+plot(LANDMAP["ScenicQuality"], border = 'NA', col = RColorBrewer::brewer.pal(4, "YlOrBr"), key.pos = 1)  
 ```
 
 Add wildness measures
@@ -158,10 +159,19 @@ library(exactextractr)
 Wildness <- raster('Z:\\R\\R projects\\LCA-GB\\James\\mce_eq256')
 
 LANDMAP <- st_transform(LANDMAP, crs = st_crs(Wildness)) %>%
-  exact_extract(Wildness, ., fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), quantiles = c(0.25, 0.75)) %>%
+  exact_extract(Wildness, ., 
+                fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), 
+                quantiles = c(0.25, 0.75)) %>%
   mutate(Wildness.iqr = q75 - q25) %>%
-  dplyr::select(Wildness.mean = mean, Wildness.median = median, Wildness.iqr, Wildness.cv = coefficient_of_variation, Wildness.variance = variance) %>%
-  bind_cols(LANDMAP[, 1:13], .) %>%
+  bind_cols(LANDMAP, .) %>%
+  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, ScenicQuality, Consultant,
+                Votes, Scenicness.mean_of_all, Scenicness.median_of_all,
+                Scenicness.entropy_of_all, Scenicness.number_of_all,
+                Scenicness.mean_of_median, Scenicness.median_of_median,
+                Scenicness.mean_of_mean, Scenicness.median_of_mean,
+                Scenicness.mean_of_bayescore, Scenicness.median_of_bayescore,
+                Wildness.mean = mean, Wildness.median = median, Wildness.iqr, 
+                Wildness.cv = coefficient_of_variation, Wildness.variance = variance) %>%
   st_transform(crs = 27700)
 
 landmap <- st_cast(LANDMAP, "POLYGON") %>%
@@ -238,11 +248,8 @@ print(landmap_B.shape)
 #   sns.pairplot(landmap_concat, hue='ScenicQuality', palette='vlag', height=3)
 
 # split train/test set
-# X = landmap_B.loc[:, ['Scenicness.median', 'Scenicness.entropy', 
-#                       'Wildness.median', 'Wildness.variance',
-#                       'x', 'y']]
-                      
-X = landmap_B.loc[:, ['Scenicness.mean', 'Wildness.mean']]
+# X = landmap_B.loc[:, ['Scenicness.mean', 'Wildness.mean']]
+X = landmap_B.loc[:, ['Scenicness.median', 'x', 'y']]
 y = landmap_B.loc[:, ['ScenicQuality']]
 
 # from sklearn.preprocessing import OrdinalEncoder
