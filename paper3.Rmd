@@ -28,8 +28,10 @@ invisible(lapply(packages, library, character.only = TRUE))
 
 rm(list = c("installed_packages", "packages"))
 ```
+
 ## Bayesian XXX by Evan Miller
-Where zα/2 is the 1−α/2 quantile of a normal distribution.
+
+Where zα/2 is the 1−α/2 quantile of a normal distribution. - Evan Miller shows a Bayesian approach to ranking 5-star ratings: - <https://stackoverflow.com/questions/1411199/what-is-a-better-way-to-sort-by-a-5-star-rating/40958702#40958702>
 
 ```{r Bayesian Ranking}
 "
@@ -249,7 +251,7 @@ print(landmap_B.shape)
 
 # split train/test set
 # X = landmap_B.loc[:, ['Scenicness.mean', 'Wildness.mean']]
-X = landmap_B.loc[:, ['Scenicness.median', 'x', 'y']]
+X = landmap_B.loc[:, ['Scenicness.median_of_bayescore', 'Wildness.median', 'x', 'y']]
 y = landmap_B.loc[:, ['ScenicQuality']]
 
 # from sklearn.preprocessing import OrdinalEncoder
@@ -277,14 +279,14 @@ X_train, X_test, y_train, y_test = train_test_split(X, y,
                                                     random_state = 2046, 
                                                     stratify = y)
 ```
+
 ## Hyperparameter Tuning
 
 The optimization process consists of 4 parts which are as follows:
 
 #### 1. Define a search space
 
-The domain space is the input values over which we want to search.
-Choose hyperparameter domain to search over
+The domain space is the input values over which we want to search. Choose hyperparameter domain to search over
 
 -   `eta` [0,1] is analogous to learning rate in GBM conceived as the step size shrinkage.
 -   `n_estimators` [X/L/C]: no. of boosting iterations
@@ -344,6 +346,7 @@ from hyperopt.pyll.stochastic import sample
 space = {'eta': hp.uniform('eta', 0.01, 1.01)}
 print(sample(space))
 ```
+
 #### 2. Define an objective/loss/cost function
 
 The objective function can be any function which returns a real value that we want to minimize. In this case, we want to minimize the validation error of a machine learning model with respect to the hyperparameters. If the real value is accuracy, then we want to maximize it. Then the function should return the negative of that metric.
@@ -391,11 +394,12 @@ best_params = optimize(trials, param_space)
 # Return the best parameters
 space_eval(param_space, best_params)
 ```
+
 #### 4. Results
 
 Results are score or value pairs that the algorithm uses to build the model.
 
-## Fit xgboost model
+## Fit/Train the xgboost model
 
 ```{python}
 import xgboost as xgb
@@ -426,7 +430,7 @@ dtrain = xgb.DMatrix(X_train, label = y_train)
 # Consultant B
 params = {
           'booster': 'gbtree',
-        #'num_round': 1433.996,
+        'num_round': 1434, #1433.996,
               'eta': 0.892,
             'gamma': 0,
         'max_depth': 4,
@@ -436,24 +440,25 @@ params = {
         'num_class': 4,
         'objective': 'multi:softmax',
       'eval_metric': 'merror',
-             'seed': 1997
+             'seed': 1995
   }
 
 # -- train model
 import time
 start = time.time()
 
-model = xgb.train(space_eval(param_space, best_params), 
-                  dtrain, 
-                  num_boost_round = 500,
-                  evals = [(dtrain, 'train'), (dtest, 'test')],
-                  early_stopping_rounds = 250)
-
-# model = xgb.train(params, 
-#                   dtrain, 
-#                   num_boost_round = 500, 
+# model = xgb.train(space_eval(param_space, best_params),
+#                   dtrain,
+#                   num_boost_round = 500,
 #                   evals = [(dtrain, 'train'), (dtest, 'test')],
 #                   early_stopping_rounds = 250)
+
+model = xgb.train(params,
+                  dtrain,
+                  num_boost_round = 500,
+                  evals = [(dtrain, 'train'), (dtest, 'test')],
+                  verbose_eval = 100,
+                  early_stopping_rounds = 251)
 
 # model = xgb.cv(space_eval(param_space, best_params), dtrain, num_boost_round = 2000, nfold = 5, stratified = True)
 # model.head()
@@ -478,24 +483,55 @@ model.save_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
 
 ## SHAP analysis of xgboost results
 
-```{python}
+```{python, engine.path = '.venv/Scripts/python'}
 import shap
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.pylab as pl
+import xgboost as xgb
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import plot_confusion_matrix
 
-# -- load the saved model
-model = xgb.XGBRegressor()
-model.load_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
+# print the JS visualization code to the notebook
+shap.initjs()
 
+# -- load the saved model
+model = xgb.XGBClassifier()
+model.load_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
+```
+
+## Confusion matrix
+```{python}
 # -- view the confusion matrix
 class_names = ['Low', 'Moderate', 'High', 'Outstanding']
-disp = plot_confusion_matrix(model, X_test, y_test, 
+disp = ConfusionMatrixDisplay.from_predictions(model, X_test, y_test, 
                              display_labels = class_names, 
                              cmap = plt.cm.Blues, 
                              xticks_rotation = 'vertical')
+```
 
+```{python}
+# -- play shap
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X_train, approximate=True)
+
+shap.plots.beeswarm(shap_values, show=False, color_bar=False)
+plt.colorbar()
+plt.show()
+
+# shap.summary_plot(shap_values[1], 
+#                   X_train.values, 
+#                   feature_names = X_train.columns,
+#                   plot_size = (10, 4))
+#                   
+# plt.gcf().axes[-1].set_aspect('auto')
+# plt.tight_layout()
+# As mentioned, smaller "box_aspect" value to make colorbar thicker
+# plt.gcf().axes[-1].set_box_aspect(200) 
+                             
+```
+
+```{python}
 # -- view the feature importance
 importances = model.feature_importances_
 indices = np.argsort(importances)
@@ -512,63 +548,86 @@ plt.show()
 fig.set_size_inches(18.5, 10.5)
 fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\pyplot.png")
 plt.clf()
+```
 
-# -- play shap
-explainer = shap.TreeExplainer(model)
-shap_values = explainer.shap_values(X_test, approximate = True)
-shap.summary_plot(shap_values[0], X_test.values, feature_names = X_test.columns)
-fig.set_size_inches(18.5, 20.5)
-fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\shap.png")
+```{python}
+# get just the explanations for the positive class
+# shap_values = shap_values[...,1]
 
-# -- first trial
+# shap.plots.bar(shap_values[...,1])
+```
+
+```{python}
 shap.initjs()
-shap_values = shap.TreeExplainer(model).shap_values(X_test)
-shap.summary_plot(shap_values, X_test)
+# shap_values[1] what does the index mean?
+shap.summary_plot(shap_values[1], X_train.values, feature_names=X_train.columns)
+# shap.summary_plot(shap_values, X_test, max_display = X_test.shape[1]) 
 
-# -- second trial
-scaler = StandardScaler()
-scaled_data = scaler.fit_transform(X_test.iloc[:,:-1])
-shap_values = explainer.shap_values(scaled_data.iloc[0,:-1].values.reshape(1,-1))
-shap.force_plot(explainer.expected_value[0], shap_values[0], link='logit')  # repeat changing 0 for i in range(0, 5)
 
-# -- third trial
-shap.initjs()
-class_names = ['Low', 'Moderate', ' High', 'Outstanding']
-shap.summary_plot(shap_values, X_test, plot_type="bar", class_names= class_names, feature_names = ['Scenicness', 'Wildness'])
+# -- Dependence Contribution Plots
+# make plot.
+shap.dependence_plot('Scenicness.median_of_bayescore', shap_values[3], X_train, interaction_index = 'Wildness.median')
 
-# -- plot the global importance of each feature
-shap.plots.bar(explainer)
 
-# visualize the first prediction's explanation
-shap.force_plot(explainer.expected_value[0], shap_values[0])
-
-# fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
-# shap.summary_plot(shap_values)
-# # or 
-# shap.plots.beeswarm(shap_values)
-shap.summary_plot(shap_values[2], X_test)
-
-# fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
-shap.summary_plot(shap_values, X_test, plot_type="bar")
-
-shap_interaction_values = shap.TreeExplainer(model).shap_interaction_values(X_train)
-    
-X_names = ['Scenicness.median','x_coord','y_coord']
-
-shap.summary_plot(shap_interaction_values, X_train, max_display=15, 
-                  feature_names = X_names,
-                  plot_type = 'dot')
-                  # plot_type="compact_dot")
-                  
-import shap  # package used to calculate Shap values
-
-# Create object that can calculate shap values
-explainer = shap.TreeExplainer(my_model)
-
-# calculate shap values. This is what we will plot.
-# Calculate shap_values for all of val_X rather than a single row, to have more data for plot.
-shap_values = explainer.shap_values(val_X)
-
-# Make plot. Index of [1] is explained in text below.
-shap.summary_plot(shap_values[1], val_X)                  
+# explainer = shap.TreeExplainer(model2)
+# shap_values = explainer.shap_values(X_sampled)
+# shap.summary_plot (shap_values, X_sampled, max_display=X_sampled.shape[1]) 
+# i=2
+# shap.force_plot(explainer.expected_value[0], shap_values[0][i], X_test.values[i], feature_names = X_test.columns)
+# 
+# 
+# fig.set_size_inches(18.5, 20.5)
+# fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\shap.png")
+# 
+# # -- first trial
+# shap.initjs()
+# shap_values = shap.TreeExplainer(model).shap_values(X_test)
+# shap.summary_plot(shap_values, X_test)
+# 
+# # -- second trial
+# scaler = StandardScaler()
+# scaled_data = scaler.fit_transform(X_test.iloc[:,:-1])
+# shap_values = explainer.shap_values(scaled_data.iloc[0,:-1].values.reshape(1,-1))
+# shap.force_plot(explainer.expected_value[0], shap_values[0], link='logit')  # repeat changing 0 for i in range(0, 5)
+# 
+# # -- third trial
+# shap.initjs()
+# class_names = ['Low', 'Moderate', ' High', 'Outstanding']
+# shap.summary_plot(shap_values, X_test, plot_type="bar", class_names= class_names, feature_names = ['Scenicness', 'Wildness'])
+# 
+# # -- plot the global importance of each feature
+# shap.plots.bar(explainer)
+# 
+# # visualize the first prediction's explanation
+# shap.force_plot(explainer.expected_value[0], shap_values[0])
+# 
+# # fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
+# # shap.summary_plot(shap_values)
+# # # or 
+# # shap.plots.beeswarm(shap_values)
+# shap.summary_plot(shap_values[2], X_test)
+# 
+# # fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
+# shap.summary_plot(shap_values, X_test, plot_type="bar")
+# 
+# shap_interaction_values = shap.TreeExplainer(model).shap_interaction_values(X_train)
+#     
+# X_names = ['Scenicness.median','x_coord','y_coord']
+# 
+# shap.summary_plot(shap_interaction_values, X_train, max_display=15, 
+#                   feature_names = X_names,
+#                   plot_type = 'dot')
+#                   # plot_type="compact_dot")
+#                   
+# import shap  # package used to calculate Shap values
+# 
+# # Create object that can calculate shap values
+# explainer = shap.TreeExplainer(my_model)
+# 
+# # calculate shap values. This is what we will plot.
+# # Calculate shap_values for all of val_X rather than a single row, to have more data for plot.
+# shap_values = explainer.shap_values(val_X)
+# 
+# # Make plot. Index of [1] is explained in text below.
+# shap.summary_plot(shap_values[1], val_X)                  
 ```
