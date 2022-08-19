@@ -79,9 +79,11 @@ rm(list = c("temp", "temp2"))
 VS <- read_sf("http://lle.gov.wales/catalogue/item/LandmapVisualSensory.json") %>%
   st_make_valid() %>%
   mutate(ScenicQuality = factor(VS_46, levels = c("Low", "Moderate", "High", "Outstanding")),
-             Integrity = factor(VS_47, levels = c("Low", "Moderate", "High", "Outstanding")),
-             Character = factor(VS_48, levels = c("Low", "Moderate", "High", "Outstanding")),
-                Rarity = factor(VS_49, levels = c("Low", "Moderate", "High", "Outstanding"))) 
+         Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
+             # Integrity = factor(VS_47, levels = c("Low", "Moderate", "High", "Outstanding")),
+             # Character = factor(VS_48, levels = c("Low", "Moderate", "High", "Outstanding")),
+             #    Rarity = factor(VS_49, levels = c("Low", "Moderate", "High", "Outstanding"))) %>%
+  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, Consultant, ScenicQuality)
 
 ## Download Scenic-Or-Not data
 sc <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
@@ -97,60 +99,66 @@ sc <- read_tsv("http://scenicornot.datasciencelab.co.uk/votes.tsv",
          Median = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
          Variance = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% var(),
          Entropy = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
-         BayeScore = Votes %>% BayesRank(K = 10, α = .05))%>%
+         BayeScore = Votes %>% BayesRank(K = 10, α = .05),
+         Number = Votes %>% strsplit(",") %>% unlist() %>% length())%>%
   st_as_sf(coords = c("Lon","Lat"), crs = 4326) %>%
   st_transform(crs = 27700)
 ```
 
 ```{r}
 LANDMAP <- sc %>% 
-  st_join(VS, .) %>% 
+  st_join(VS, .) %>%
   aggregate(Votes~UID, data = ., paste0, collapse = ",") %>%
   merge(VS, ., by = "UID", all = T) %>%
   as_tibble() %>% 
-  st_as_sf() %>%
   rowwise() %>%
-  mutate(Scenicness.mean_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.median_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
-         Scenicness.entropy_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% entropy(),
-         Scenicness.number_of_all = Votes %>% strsplit(",") %>% unlist() %>% as.numeric() %>% na.omit() %>% length()) %>%
-  ungroup()
+  mutate(Scenicness.number_of_all = strsplit(Votes, ",") %>% unlist() %>% na.omit() %>% length(),
+         Scenicness.mean_of_all = strsplit(Votes, ",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_all = strsplit(Votes, ",") %>% unlist() %>% as.numeric() %>% median(),
+         Scenicness.entropy_of_all = strsplit(Votes, ",") %>% unlist() %>% as.numeric() %>% entropy()) %>%
+  ungroup() %>%
+  st_as_sf()
 
 LANDMAP <- sc %>%
   st_join(LANDMAP, .) %>%
   aggregate(Median~UID, data = ., paste0, collapse = ",") %>%
   merge(LANDMAP, ., by = "UID", all = T) %>%
   as_tibble() %>%
-  st_as_sf() %>%
   rowwise() %>%
-  mutate(Scenicness.mean_of_median = Median %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.median_of_median = Median %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median()) %>%
-  ungroup()
+  mutate(Scenicness.mean_of_median = strsplit(Median, ",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_median = strsplit(Median, ",") %>% unlist() %>% as.numeric() %>% median()) %>%
+  dplyr::select(-Median) %>%
+  ungroup() %>%
+  st_as_sf()
 
 LANDMAP <- sc %>%
   st_join(LANDMAP, .) %>%
   aggregate(Mean~UID, data = ., paste0, collapse = ",") %>%
   merge(LANDMAP, ., by = "UID", all = T) %>%
   as_tibble() %>%
-  st_as_sf() %>%
   rowwise() %>%
-  mutate(Scenicness.mean_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.median_of_mean = Mean %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median()) %>%
-  ungroup()
+  mutate(Scenicness.mean_of_mean = strsplit(Mean, ",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_mean = strsplit(Mean, ",") %>% unlist() %>% as.numeric() %>% median()) %>%
+  dplyr::select(-Mean) %>%
+  ungroup() %>%
+  st_as_sf()
 
 LANDMAP <- sc %>%
   st_join(LANDMAP, .) %>%
-  aggregate(BayeScore~UID, data = ., paste0, collapse = ",") %>%
+  aggregate(cbind(BayeScore, Number, VR = BayeScore*Number)~UID, data = ., paste0, collapse = ",") %>%
   merge(LANDMAP, ., by = "UID", all = T) %>%
   as_tibble() %>%
-  st_as_sf() %>%
   rowwise() %>%
-  mutate(Scenicness.mean_of_bayescore = BayeScore %>% strsplit(",") %>% unlist() %>% as.numeric() %>% mean(),
-         Scenicness.median_of_bayescore = BayeScore %>% strsplit(",") %>% unlist() %>% as.numeric() %>% median(),
-         Consultant = ifelse(str_detect(VS_1a, "Bronwen Thomas"), "B", "A")) %>%
-  ungroup()
+  mutate(Scenicness.mean_of_bayescore = strsplit(BayeScore, ",") %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_bayescore = strsplit(BayeScore, ",") %>% unlist() %>% as.numeric() %>% median(),
+         Score_multiplied_by_Number = strsplit(VR, ",") %>% unlist() %>% as.numeric() %>% sum(na.rm = TRUE),
+         Scenicness.weighted_bayescore =  Score_multiplied_by_Number/(Scenicness.number_of_all + 3) + 
+                                          3*Scenicness.mean_of_bayescore/(Scenicness.number_of_all + 3)) %>%
+  dplyr::select(-c(BayeScore, Number, VR, Score_multiplied_by_Number)) %>%
+  ungroup() %>%
+  st_as_sf()
 
-plot(LANDMAP["ScenicQuality"], border = 'NA', col = RColorBrewer::brewer.pal(4, "YlOrBr"), key.pos = 1)  
+# plot(LANDMAP["ScenicQuality"], border = 'NA', col = RColorBrewer::brewer.pal(4, "YlOrBr"), key.pos = 1)  
 ```
 
 Add wildness measures
@@ -164,22 +172,52 @@ LANDMAP <- st_transform(LANDMAP, crs = st_crs(Wildness)) %>%
   exact_extract(Wildness, ., 
                 fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), 
                 quantiles = c(0.25, 0.75)) %>%
-  mutate(Wildness.iqr = q75 - q25) %>%
+  mutate(Wildness.mean = mean,
+         Wildness.median = median,
+         Wildness.iqr = q75 - q25,
+         Wildness.cv = coefficient_of_variation,
+         Wildness.variance = variance) %>%
+  dplyr::select(-c(mean, median, q25, q75, coefficient_of_variation, variance)) %>%
   bind_cols(LANDMAP, .) %>%
-  dplyr::select(UID, CLS_1, CLS_2, CLS_3, CLS_4, ScenicQuality, Consultant,
-                Votes, Scenicness.mean_of_all, Scenicness.median_of_all,
-                Scenicness.entropy_of_all, Scenicness.number_of_all,
-                Scenicness.mean_of_median, Scenicness.median_of_median,
-                Scenicness.mean_of_mean, Scenicness.median_of_mean,
-                Scenicness.mean_of_bayescore, Scenicness.median_of_bayescore,
-                Wildness.mean = mean, Wildness.median = median, Wildness.iqr, 
-                Wildness.cv = coefficient_of_variation, Wildness.variance = variance) %>%
   st_transform(crs = 27700)
 
 landmap <- st_cast(LANDMAP, "POLYGON") %>%
-  dplyr::mutate(x = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 1],
-                y = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 2])
+  dplyr::mutate(UID = row_number(),
+                x_coord = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 1],
+                y_coord = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 2])
 summary(landmap)
+```
+
+Separate the consultant and then split train-test sets
+```{r}
+landmap_A = landmap %>% filter(Consultant == "A")
+landmap_B = landmap %>% filter(Consultant == "B")
+
+library(rsample)
+
+# Set the random number stream using `set.seed()` so that the results can be 
+# reproduced later. 
+set.seed(2046)
+
+# Save the split information for an 80/20 split of the data
+split <- landmap %>% 
+  filter(!is.na(ScenicQuality)) %>% 
+  initial_split(prop = 0.80, strata = ScenicQuality)
+
+train_set <- training(split) %>% st_drop_geometry() 
+ test_set <- testing(split) %>% st_drop_geometry() 
+dim(train_set)
+dim(test_set) 
+
+X_train <- train_set %>% 
+  dplyr::select(Scenicness = Scenicness.median_of_bayescore,
+                Wildness = Wildness.median, x_coord, y_coord)
+ X_test <-  test_set %>% 
+   dplyr::select(Scenicness = Scenicness.median_of_bayescore,
+                 Wildness = Wildness.median, x_coord, y_coord)
+
+y_train <- train_set %>% dplyr::select(ScenicQuality)
+ y_test <-  test_set %>% dplyr::select(ScenicQuality)  
 ```
 
 ```{r}
@@ -202,84 +240,20 @@ repl_python()
 # usethis::edit_r_environ()
 # usethis::edit_r_profile()
 ```
-
 ```{python}
-import geopandas as gpd
-import pandas as pd
-from sklearn.preprocessing import OrdinalEncoder
-from sklearn.compose import make_column_transformer
-
-landmap = r.landmap
-landmap = landmap.dropna(subset=['ScenicQuality'])
-
-print(landmap)
-landmap.describe()
-print(landmap['ScenicQuality'].value_counts())
-
-landmap.isnull().sum()
-
-landmap_A = landmap.query("Consultant in ['A']")
-landmap_B = landmap.query("Consultant in ['B']")
-
-print(landmap.shape)
-print(landmap_A.shape)
-print(landmap_B.shape)
-
-# def split_consultant(landmap):
-#   X = landmap.loc[:, ['Scenicness.mean', 'Scenicness.entropy', 'Wildness.median', 'Wildness.iqr']]
-#   y = landmap.loc[:, ['ScenicQuality']]
-# 
-#   # Instantiate the label encoder
-#   transformer = make_column_transformer(
-#     (OrdinalEncoder(categories=[['Low', 'Moderate', 'High', 'Outstanding']]), ['ScenicQuality'])
-#   )
-# 
-#   y = transformer.fit_transform(y)
-#   
-#   y = pd.DataFrame(y, columns = ['ScenicQuality'])
-#   return X, y
-# 
-# def EDA_plot(y, X):
-#   import pandas as pd
-#   # concatenating y and X along columns
-#   landmap_concat = pd.DataFrame(pd.concat([y.reset_index(drop=True), X.reset_index(drop=True)], axis=1))
-#   print(landmap_concat.shape)
-# 
-#   import seaborn as sns
-#   sns.set()
-#   sns.pairplot(landmap_concat, hue='ScenicQuality', palette='vlag', height=3)
-
-# split train/test set
-# X = landmap_B.loc[:, ['Scenicness.mean', 'Wildness.mean']]
-X = landmap_B.loc[:, ['Scenicness.median_of_bayescore', 'Wildness.median', 'x', 'y']]
-y = landmap_B.loc[:, ['ScenicQuality']]
-
-# from sklearn.preprocessing import OrdinalEncoder
-# OE = OrdinalEncoder()
-# y[['Scale']] = OE.fit_transform(y[['ScenicQuality']])
-
-scale_mapper = {'Low': int(0), 
-                'Moderate': int(1), 
-                'High': int(2), 
+# -- load in the train/test sets
+X_train = r.X_train
+y_train = r.y_train
+ X_test = r.X_test
+ y_test = r.y_test
+ 
+scale_mapper = {'Low': int(0),
+                'Moderate': int(1),
+                'High': int(2),
                 'Outstanding': int(3)}
-                
-y[['ScenicQuality']] = y[['ScenicQuality']].replace(scale_mapper).astype('int')
-
-# X, y = split_consultant(landmap)
-print(y.shape, X.shape)
-X.head()
-y.head()
-# EDA_plot(y, X)
-
-
-# -- Create train/test split
-from sklearn.model_selection import train_test_split
-X_train, X_test, y_train, y_test = train_test_split(X, y, 
-                                                    test_size = 0.2, 
-                                                    random_state = 2046, 
-                                                    stratify = y)
+y_train[['ScenicQuality']] = y_train[['ScenicQuality']].replace(scale_mapper).astype('int')
+ y_test[['ScenicQuality']] = y_test[['ScenicQuality']].replace(scale_mapper).astype('int')
 ```
-
 ## Hyperparameter Tuning
 
 The optimization process consists of 4 parts which are as follows:
@@ -428,8 +402,7 @@ dtrain = xgb.DMatrix(X_train, label = y_train)
 #     }
 
 # Consultant B
-params = {
-          'booster': 'gbtree',
+params = {'booster': 'gbtree',
         'num_round': 1434, #1433.996,
               'eta': 0.892,
             'gamma': 0,
@@ -440,25 +413,24 @@ params = {
         'num_class': 4,
         'objective': 'multi:softmax',
       'eval_metric': 'merror',
-             'seed': 1995
-  }
+             'seed': 1995}
 
 # -- train model
 import time
 start = time.time()
 
-# model = xgb.train(space_eval(param_space, best_params),
-#                   dtrain,
-#                   num_boost_round = 500,
-#                   evals = [(dtrain, 'train'), (dtest, 'test')],
-#                   early_stopping_rounds = 250)
-
-model = xgb.train(params,
+model = xgb.train(space_eval(param_space, best_params),
                   dtrain,
                   num_boost_round = 500,
                   evals = [(dtrain, 'train'), (dtest, 'test')],
-                  verbose_eval = 100,
-                  early_stopping_rounds = 251)
+                  early_stopping_rounds = 250)
+
+# model = xgb.train(params,
+#                   dtrain,
+#                   num_boost_round = 500,
+#                   evals = [(dtrain, 'train'), (dtest, 'test')],
+#                   verbose_eval = 100,
+#                   early_stopping_rounds = 251)
 
 # model = xgb.cv(space_eval(param_space, best_params), dtrain, num_boost_round = 2000, nfold = 5, stratified = True)
 # model.head()
@@ -466,19 +438,23 @@ model = xgb.train(params,
 print("XGBoost model training time: %s seconds" % (str(time.time() - start)))
 
 y_pred = model.predict(dtest)
+y_pred = y_pred.astype(int)
+y_true = y_test.values.flatten()
 
 # -- evaluate model using test data
+# -- overall accuracy
 from sklearn.metrics import accuracy_score
-
-accuracy = accuracy_score(y_test, y_pred)
+y_actual = y_test.values.flatten()
+accuracy = accuracy_score(y_true, y_pred)
 print("Accuracy: %.2f%%" % (accuracy * 100.0))
- 
+
+# -- Cohen's kappa 
 from sklearn.metrics import cohen_kappa_score
-kappa = cohen_kappa_score(y_pred, y_test)
+kappa = cohen_kappa_score(y_true, y_pred)
 print("Kappa: %.2f" % (kappa))
 
 # -- save to JSON
-model.save_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
+model.save_model("Z:\\R\\R projects\\LCA-GB\\models\\model.json")
 ```
 
 ## SHAP analysis of xgboost results
@@ -490,46 +466,183 @@ import matplotlib.pyplot as plt
 import matplotlib.pylab as pl
 import xgboost as xgb
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import plot_confusion_matrix
 
 # print the JS visualization code to the notebook
 shap.initjs()
 
 # -- load the saved model
 model = xgb.XGBClassifier()
-model.load_model("Z:\\R\\R projects\\LCA-GB\\models\\model_B.json")
+model.load_model("Z:\\R\\R projects\\LCA-GB\\models\\model.json")
 ```
 
-## Confusion matrix
+## Confusion matrix and its visualisation
 ```{python}
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+
+cm = confusion_matrix(y_test.values, y_pred)
 # -- view the confusion matrix
-class_names = ['Low', 'Moderate', 'High', 'Outstanding']
-disp = ConfusionMatrixDisplay.from_predictions(model, X_test, y_test, 
-                             display_labels = class_names, 
-                             cmap = plt.cm.Blues, 
-                             xticks_rotation = 'vertical')
+disp = ConfusionMatrixDisplay(confusion_matrix = cm, 
+                              display_labels = ['Low', 'Moderate', 'High', 'Outstanding'])
+disp.plot(cmap = plt.cm.Blues)
+plt.show(); plt.close()
 ```
 
-```{python}
+```{python plot}
+X =  r.landmap.loc[:, ['Scenicness.median_of_bayescore', 'Wildness.median', 'x', 'y']]
 # -- play shap
 explainer = shap.TreeExplainer(model)
-shap_values = explainer.shap_values(X_train, approximate=True)
+# X = landmap.loc[:, ['UID', 'Scenicness.median_of_bayescore', 'Wildness.median', 'x', 'y']]
+# The approximate argument set to True to fix some of the shap_values with NaN value
+# shape of shap_values is : (4, 1321, 4) means 4 classes, 1321 rows(observations), each 4 columns(features).
+shap_values = explainer.shap_values(X, approximate = True)
 
-shap.plots.beeswarm(shap_values, show=False, color_bar=False)
-plt.colorbar()
-plt.show()
+# shap.plots.beeswarm(shap_values, show = True, color_bar = False)
+# plt.colorbar()
+# plt.show()
 
-# shap.summary_plot(shap_values[1], 
-#                   X_train.values, 
-#                   feature_names = X_train.columns,
-#                   plot_size = (10, 4))
-#                   
-# plt.gcf().axes[-1].set_aspect('auto')
-# plt.tight_layout()
-# As mentioned, smaller "box_aspect" value to make colorbar thicker
-# plt.gcf().axes[-1].set_box_aspect(200) 
-                             
+# In the case of matplotlib version 3.5 above, the adjustment of colorbar legend was referred to https://github.com/slundberg/shap/issues/2493
+# summary plot for "CLASS 0" (Low scenic quality) 
+shap.summary_plot(shap_values[0],
+                  X_train.values,
+                  feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], #X_train.columns,
+                  show = False,
+                  # plot_type = 'compact_dot', # making the dots disappear
+                  plot_size = (50, 6))
+plt.gcf().axes[-1].set_aspect('auto')
+plt.tight_layout()
+plt.gcf().axes[-1].set_box_aspect(40) # smaller "box_aspect" value to make colorbar thicker
+plt.show(); plt.close()
+# plt.savefig('fig_tes1.png', bbox_inches='tight',dpi=300); plt.close()
+
+# X_names = ['pct_18_34','pct_white','pct_bach',
+#           'pct_no_car','log_pop_den','job_entropy','network_den',
+#           'ave_trip_dist','pct_share','x_coord','y_coord']
+# 
+# fig, ax = plt.subplots(figsize=(8, 6),dpi=160)
+# 
+# shap.summary_plot(shap_interaction_values, X_coords, max_display=15, 
+#                   feature_names = X_names,
+#                   plot_type="compact_dot")
 ```
+## Spatial patterns of SHAP values
+```{python}
+# landmap = r.landmap
+X_vars = ['Scenicness','Wildness', 'x', 'y']
+
+fig, ax = plt.subplots(2,2,figsize=(15,15))
+
+for j in range(len(X_vars)):
+  j = 1
+    ax = ax.ravel()
+    X.plot(ax=ax[j],column = shap_values.values[:,j],legend=True,
+                 vmin=-0.8,vmax=0.8,cmap=shap.plots.colors.red_white_blue)
+    
+    ax[j].set_title("SHAP for\n" + X_vars[j],fontsize=10)
+    
+#fig.delaxes(ax[-1])
+
+```
+
+```{r}
+shap_values = py$shap_values
+shap_Low = data.frame(shap_values[[1]]) %>% transmute(SHAP_Scenicness_Low = X1, 
+                                                      SHAP_Wildness_Low = X2,
+                                                      SHAP_Location_Low = X3 + X4) 
+shap_Moderate = data.frame(shap_values[[2]]) %>% transmute(SHAP_Scenicness_Moderate = X1,
+                                                           SHAP_Wildness_Moderate = X2,
+                                                           SHAP_Location_Moderate= X3 + X4)
+shap_High = data.frame(shap_values[[3]]) %>% transmute(SHAP_Scenicness_High = X1,
+                                                       SHAP_Wildness_High = X2,
+                                                       SHAP_Location_High = X3 + X4)
+shap_Outstanding = data.frame(shap_values[[4]]) %>% transmute(SHAP_Scenicness_Outstanding = X1,
+                                                              SHAP_Wildness_Outstanding = X2,
+                                                              SHAP_Location_Outstanding = X3 + X4)
+   
+landmap_shap = cbind(landmap, shap_Low, shap_Moderate, shap_High, shap_Outstanding)
+rm(list = c('shap_Low', 'shap_Moderate', 'shap_High', 'shap_Outstanding'))
+
+```
+## Visualising the spatial distributions of SHAP values for each covariate with each class
+```{r}
+library(ggplot2)
+
+theme_map <- function(...) {
+  theme_minimal() +
+    theme(
+      text = element_text(color = "#22211d"), # family = "Garamond", "Ubuntu Regular"
+      axis.line = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      # panel.grid.minor = element_line(color = "#ebebe5", size = 0.2),
+      panel.grid.major = element_blank(), #element_line(color = "#ebebe5", size = 0.2),
+      panel.grid.minor = element_blank(),
+      plot.background = element_blank(), #element_rect(fill = "#f5f5f2", color = NA), 
+      panel.background = element_blank(), #element_rect(fill = "#f5f5f2", color = NA), 
+      legend.background = element_blank(), #element_rect(fill = "#f5f5f2", color = NA),
+      panel.border = element_blank(),
+      ...
+    )
+}
+
+f <- list()
+
+for (i in 1:12) {
+  f[[i]] <- ggplot() +
+    geom_sf(data = landmap_shap, aes(fill = !!sym(names(landmap_shap)[i+25])), colour = NA) +
+    theme_map() +
+    labs(x = NULL, 
+         y = NULL, 
+         title = names(landmap_shap)[i+25]) + # stringr::str_c("SHAP for ", collapse = " ")
+    theme(legend.position = "bottom",
+          title = element_text(size = 15)) +
+    scale_fill_gradient2(low = ("#CB181D"),
+                         mid = "white",
+                         name = NULL,
+                         high = ("#2171B5"),
+                         midpoint = 0,
+                         space = "Lab",
+                         na.value = "white",
+                         guide = guide_colourbar(title.position = "top",
+                                                 # title.hjust = 0.5,
+                                                 title.vjust = 0.8,
+                                                 barwidth = 15))
+}
+
+## -- multiplot function
+multiplot <- function(plot.list, file, cols=3, layout=NULL) {
+	library(grid)
+	numPlots = length(plot.list)
+	if (is.null(layout)) {
+		layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+						ncol = cols, nrow = ceiling(numPlots/cols))
+	}
+	if (numPlots==1) {
+		print(plots[[1]])
+	} else {
+	  grid.newpage()
+	  pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+	  for (i in 1:numPlots) {
+	  	matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+	  	print(plot.list[[i]], vp = viewport(layout.pos.row = matchidx$row,
+	  									layout.pos.col = matchidx$col))
+	  }
+	}
+}
+
+## map together
+setwd("Z:\\R\\R projects\\LCA-GB\\figures")
+png(filename = "SHAP_values.png", w = 10*2, h = 6*2, units = "in", res = 300)
+par(mar = c(0,0,0,0))
+multiplot(list(f[1], f[2], f[3], f[4], 
+               f[5], f[6], f[7], f[8], 
+               f[9], f[10], f[11], f[12]), cols = 4)
+dev.off()
+```
+
 
 ```{python}
 # -- view the feature importance
