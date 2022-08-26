@@ -210,10 +210,10 @@ dim(train_set)
 dim(test_set) 
 
 X_train <- train_set %>% 
-  dplyr::select(Scenicness = Scenicness.median_of_bayescore,
+  dplyr::select(Scenicness = Scenicness.weighted_bayescore,
                 Wildness = Wildness.median, x_coord, y_coord)
  X_test <-  test_set %>% 
-   dplyr::select(Scenicness = Scenicness.median_of_bayescore,
+   dplyr::select(Scenicness = Scenicness.weighted_bayescore,
                  Wildness = Wildness.median, x_coord, y_coord)
 
 y_train <- train_set %>% dplyr::select(ScenicQuality)
@@ -230,16 +230,9 @@ Sys.which("Python")
 library(reticulate)
 # -- creates an interactive Python console, REPL (Read, Eval, Print Loop), within R.
 repl_python() 
-
-# reticulate::py_config() # why numpy_version couldn't be found?
-# use_python("Z:\\R\\R projects\\LCA-GB\\my_env_Python_3.9.13\\Scripts\\python.exe")
-# 
-# # use_virtualenv("Z:\\R\\R projects\\LCA-GB\\my_env_Python_3.9.13", required = TRUE)
-# 
-# install.packages("usethis")
-# usethis::edit_r_environ()
-# usethis::edit_r_profile()
 ```
+
+
 ```{python}
 # -- load in the train/test sets
 X_train = r.X_train
@@ -419,18 +412,18 @@ params = {'booster': 'gbtree',
 import time
 start = time.time()
 
-model = xgb.train(space_eval(param_space, best_params),
-                  dtrain,
-                  num_boost_round = 500,
-                  evals = [(dtrain, 'train'), (dtest, 'test')],
-                  early_stopping_rounds = 250)
-
-# model = xgb.train(params,
+# model = xgb.train(space_eval(param_space, best_params),
 #                   dtrain,
 #                   num_boost_round = 500,
 #                   evals = [(dtrain, 'train'), (dtest, 'test')],
-#                   verbose_eval = 100,
-#                   early_stopping_rounds = 251)
+#                   early_stopping_rounds = 250)
+
+model = xgb.train(params,
+                  dtrain,
+                  num_boost_round = 500,
+                  evals = [(dtrain, 'train'), (dtest, 'test')],
+                  verbose_eval = 100,
+                  early_stopping_rounds = 251)
 
 # model = xgb.cv(space_eval(param_space, best_params), dtrain, num_boost_round = 2000, nfold = 5, stratified = True)
 # model.head()
@@ -489,10 +482,10 @@ plt.show(); plt.close()
 ```
 
 ```{python plot}
-X =  r.landmap.loc[:, ['Scenicness.median_of_bayescore', 'Wildness.median', 'x', 'y']]
+X =  r.landmap.loc[:, ['Scenicness.median_of_bayescore', 'Wildness.median', 'x_coord', 'y_coord']]
 # -- play shap
 explainer = shap.TreeExplainer(model)
-# X = landmap.loc[:, ['UID', 'Scenicness.median_of_bayescore', 'Wildness.median', 'x', 'y']]
+
 # The approximate argument set to True to fix some of the shap_values with NaN value
 # shape of shap_values is : (4, 1321, 4) means 4 classes, 1321 rows(observations), each 4 columns(features).
 shap_values = explainer.shap_values(X, approximate = True)
@@ -501,12 +494,37 @@ shap_values = explainer.shap_values(X, approximate = True)
 # plt.colorbar()
 # plt.show()
 
-# In the case of matplotlib version 3.5 above, the adjustment of colorbar legend was referred to https://github.com/slundberg/shap/issues/2493
+# In the case of matplotlib version 3.5 above, the adjustment of colorbar legend was referred to https://stackoverflow.com/questions/70461753/shap-the-color-bar-is-not-displayed-in-the-summary-plot/
 # summary plot for "CLASS 0" (Low scenic quality) 
-shap.summary_plot(shap_values[0],
-                  X_train.values,
-                  feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], #X_train.columns,
-                  show = False,
+
+# landmap = r.landmap
+X_vars = ['Scenicness','Wildness', 'x_coord', 'y_coord']
+
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(2,2,figsize=(15,15))
+
+for j in range(len(shap_values)):
+    ax = ax.ravel()
+    # X.plot(ax=ax[j],column = shap_values.values[:,j],legend=True,
+    #              vmin=-0.8,vmax=0.8,cmap=shap.plots.colors.red_white_blue)
+    fig[j] = shap.summary_plot(shap_values[1],
+                              X.values,
+                              feature_names = X_vars,
+                              show = False),
+                              # plot_type = 'compact_dot', # making the dots disappear
+                              plot_size = (50, 6))
+             plt.gcf().axes[-1].set_aspect('auto')
+             plt.tight_layout()
+             plt.gcf().axes[-1].set_box_aspect(40)
+    ax[j].set_title("SHAP for\n" + X_vars[j],fontsize=10)
+    
+fig.delaxes(ax[-1])
+
+
+shap.summary_plot(shap_values[1],
+                  X.values,
+                  feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], show = False),
                   # plot_type = 'compact_dot', # making the dots disappear
                   plot_size = (50, 6))
 plt.gcf().axes[-1].set_aspect('auto')
@@ -514,36 +532,8 @@ plt.tight_layout()
 plt.gcf().axes[-1].set_box_aspect(40) # smaller "box_aspect" value to make colorbar thicker
 plt.show(); plt.close()
 # plt.savefig('fig_tes1.png', bbox_inches='tight',dpi=300); plt.close()
-
-# X_names = ['pct_18_34','pct_white','pct_bach',
-#           'pct_no_car','log_pop_den','job_entropy','network_den',
-#           'ave_trip_dist','pct_share','x_coord','y_coord']
-# 
-# fig, ax = plt.subplots(figsize=(8, 6),dpi=160)
-# 
-# shap.summary_plot(shap_interaction_values, X_coords, max_display=15, 
-#                   feature_names = X_names,
-#                   plot_type="compact_dot")
 ```
 ## Spatial patterns of SHAP values
-```{python}
-# landmap = r.landmap
-X_vars = ['Scenicness','Wildness', 'x', 'y']
-
-fig, ax = plt.subplots(2,2,figsize=(15,15))
-
-for j in range(len(X_vars)):
-  j = 1
-    ax = ax.ravel()
-    X.plot(ax=ax[j],column = shap_values.values[:,j],legend=True,
-                 vmin=-0.8,vmax=0.8,cmap=shap.plots.colors.red_white_blue)
-    
-    ax[j].set_title("SHAP for\n" + X_vars[j],fontsize=10)
-    
-#fig.delaxes(ax[-1])
-
-```
-
 ```{r}
 shap_values = py$shap_values
 shap_Low = data.frame(shap_values[[1]]) %>% transmute(SHAP_Scenicness_Low = X1, 
@@ -642,7 +632,69 @@ multiplot(list(f[1], f[2], f[3], f[4],
                f[9], f[10], f[11], f[12]), cols = 4)
 dev.off()
 ```
+# Change of support (to 1 km grid)
+```{r}
+# -- download the administrative region for Great Britain from GADM
+UK <- raster::getData('GADM', country = 'GBR', level = 0) |>
+  as('sf') |>
+  # filter(!NAME_1=='Northern Ireland') |>
+  st_transform(crs = 27700)
+plot(UK)
 
+# -- download OSGB 1 km grid from github and covert its coordinate system to 27700
+grid_1km <- "https://raw.githubusercontent.com/charlesroper/OSGB_Grids/master/GeoJSON/OSGB_Grid_1km.geojson" |>
+  geojsonio::geojson_read(what = "sp") |>
+  as("sf") |>
+  st_transform(crs = 27700) 
+
+st_crs(grid_1km) == st_crs(sc)
+
+# -- spatial join OSGB 1 km grid with Scenic-Or-Not data
+test <- st_join(grid_1km, sc) 
+
+test1 <- test |>
+  aggregate(cbind(ID,
+                  `Geograph URI`,
+                  Votes,
+                  Number,
+                  Mean,
+                  Median,
+                  BayeScore,
+                  Entropy,
+                  Variance)~PLAN_NO, data = ., paste0, collapse = ",") %>%
+  merge(LANDMAP, ., by = "UID", all = T) %>%
+  as_tibble()  
+  
+plot(UK['NAME_0']) +
+  plot(test[is.na(test$ID),'Mean'])
+
+grid_1km <- st_join(grid_1km, sc, join = st_within, left = TRUE) |>
+  dplyr::select(PLAN_NO, 
+                `Scenic-Or-Not ID` = ID,
+                `Geograph URI`,
+                Votes,
+                Number,
+                Mean,
+                Median,
+                BayeScore,
+                Entropy,
+                Variance)
+
+grid_1km <- st_transform(grid_1km, crs = st_crs(Wildness)) %>%
+  exact_extract(Wildness, ., 
+                fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), 
+                quantiles = c(0.25, 0.75)) |>
+  mutate(Wildness.mean = mean,
+         Wildness.median = median,
+         Wildness.iqr = q75 - q25,
+         Wildness.cv = coefficient_of_variation,
+         Wildness.variance = variance) |>
+  dplyr::select(-c(mean, median, q25, q75, coefficient_of_variation, variance)) |>
+  bind_cols(grid_1km, .) |>
+  st_transform(crs = 27700)
+
+
+```
 
 ```{python}
 # -- view the feature importance
