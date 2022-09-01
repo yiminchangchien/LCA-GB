@@ -651,18 +651,46 @@ st_crs(grid_1km) == st_crs(sc)
 
 # -- spatial join OSGB 1 km grid with Scenic-Or-Not data
 test <- st_join(grid_1km, sc) 
+library(dplyr)
 
 test1 <- test |>
-  aggregate(cbind(ID,
-                  `Geograph URI`,
-                  Votes,
-                  Number,
-                  Mean,
-                  Median,
-                  BayeScore,
-                  Entropy,
-                  Variance)~PLAN_NO, data = ., paste0, collapse = ",") %>%
-  merge(LANDMAP, ., by = "UID", all = T) %>%
+  st_drop_geometry() |>
+  group_by(PLAN_NO) |>
+  summarise(ID = paste2(ID, collapse = ', '),
+            `Geograph URI` = paste(`Geograph URI`, collapse = ', '),
+            Votes = paste(Votes, collapse = ', '),
+            Number = paste(Number, collapse = ', '),
+            Mean = paste(Mean, collapse = ', '),
+            Median = paste(Median, collapse = ', '),
+            BayeScore = paste(BayeScore, collapse = ', '),
+            Entopy = paste(Entropy, collapse = ', ')) |>
+  ungroup() |>
+  rowwise() |>
+  
+test2 <- test1 |>  
+  mutate(Photos = strsplit(ID, ',') |> unlist() |> !is.na() |> length())
+
+strsplit(",") %>% unlist() %>% as.numeric() %>% mean()
+
+data %>% 
+      group_by(foo) %>% 
+      mutate(bars_by_foo = paste0(bar, collapse = "")) 
+
+# library(dplyr)
+# df %>% 
+#   group_by_(~page, ~passage, ~person) %>%
+#   summarize_(text=~paste(text, collapse=' '))
+
+  aggregate(#cbind(# ID,
+                  # `Geograph URI`,
+                  # Votes,
+                  # Number,
+                  # Mean,
+                  # Median,
+                  # BayeScore,
+                  # Entropy,
+                  Variance~PLAN_NO, data = ., FUN = paste, collapse = ",") %>%
+  merge(grid_1km, ., by = "PLAN_NO", all = T) |>
   as_tibble()  
   
 plot(UK['NAME_0']) +
