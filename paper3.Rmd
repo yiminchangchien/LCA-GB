@@ -200,7 +200,7 @@ library(rsample)
 set.seed(2046)
 
 # Save the split information for an 80/20 split of the data
-split <- landmap %>% 
+split <- landmap_B %>% 
   filter(!is.na(ScenicQuality)) %>% 
   initial_split(prop = 0.80, strata = ScenicQuality)
 
@@ -211,10 +211,12 @@ dim(test_set)
 
 X_train <- train_set %>% 
   dplyr::select(Scenicness = Scenicness.weighted_bayescore,
-                Wildness = Wildness.median, x_coord, y_coord)
+                Wildness = Wildness.median, 
+                x_coord, y_coord)
  X_test <-  test_set %>% 
    dplyr::select(Scenicness = Scenicness.weighted_bayescore,
-                 Wildness = Wildness.median, x_coord, y_coord)
+                 Wildness = Wildness.median, 
+                 x_coord, y_coord)
 
 y_train <- train_set %>% dplyr::select(ScenicQuality)
  y_test <-  test_set %>% dplyr::select(ScenicQuality)  
@@ -482,7 +484,7 @@ plt.show(); plt.close()
 ```
 
 ```{python plot}
-X =  r.landmap.loc[:, ['Scenicness.median_of_bayescore', 'Wildness.median', 'x_coord', 'y_coord']]
+X =  r.landmap.loc[:, ['Scenicness.weighted_bayescore', 'Wildness.median', 'x_coord', 'y_coord']]
 # -- play shap
 explainer = shap.TreeExplainer(model)
 
@@ -634,13 +636,6 @@ dev.off()
 ```
 # Change of support (to 1 km grid)
 ```{r}
-# -- download the administrative region for Great Britain from GADM
-UK <- raster::getData('GADM', country = 'GBR', level = 0) |>
-  as('sf') |>
-  # filter(!NAME_1=='Northern Ireland') |>
-  st_transform(crs = 27700)
-plot(UK)
-
 # -- download OSGB 1 km grid from github and covert its coordinate system to 27700
 grid_1km <- "https://raw.githubusercontent.com/charlesroper/OSGB_Grids/master/GeoJSON/OSGB_Grid_1km.geojson" |>
   geojsonio::geojson_read(what = "sp") |>
@@ -649,65 +644,46 @@ grid_1km <- "https://raw.githubusercontent.com/charlesroper/OSGB_Grids/master/Ge
 
 st_crs(grid_1km) == st_crs(sc)
 
-# -- spatial join OSGB 1 km grid with Scenic-Or-Not data
-test <- st_join(grid_1km, sc) 
-library(dplyr)
+# -- spatial join OSGB 1 km grid with Scenic-Or-Not data for the sake of understanding the distribution of Scenic-Or-Not ratings
 
-test1 <- test |>
+# grid_1km <- st_join(grid_1km, sc) |>
+#   st_drop_geometry() |>
+#   group_by(PLAN_NO) |>
+#   summarise(ID = paste(ID, collapse = ','),
+#             `Geograph URI` = paste(`Geograph URI`, collapse = ','),
+#             Votes = paste(Votes, collapse = ','),
+#             Number = paste(Number, collapse = ','),
+#             Mean = paste(Mean, collapse = ','),
+#             Median = paste(Median, collapse = ','),
+#             BayeScore = paste(BayeScore, collapse = ','),
+#             Entopy = paste(Entropy, collapse = ',')) |>
+#   rowwise() |>
+#   mutate(Photos = ifelse(ID == 'NA', 0, strsplit(ID, ',') %>% unlist() %>% length())) |>
+#   ungroup() %>%
+#   left_join(grid_1km, ., by = c('PLAN_NO' = 'PLAN_NO'))
+
+grid_1km <- st_join(grid_1km, sc) %>%
+  aggregate(cbind(BayeScore, Number, VR = BayeScore*Number)~PLAN_NO, data = ., paste0, collapse = ',') %>%
+  merge(grid_1km, ., by = 'PLAN_NO', all = T) |>
   st_drop_geometry() |>
-  group_by(PLAN_NO) |>
-  summarise(ID = paste2(ID, collapse = ', '),
-            `Geograph URI` = paste(`Geograph URI`, collapse = ', '),
-            Votes = paste(Votes, collapse = ', '),
-            Number = paste(Number, collapse = ', '),
-            Mean = paste(Mean, collapse = ', '),
-            Median = paste(Median, collapse = ', '),
-            BayeScore = paste(BayeScore, collapse = ', '),
-            Entopy = paste(Entropy, collapse = ', ')) |>
-  ungroup() |>
-  rowwise() |>
+  rowwise() |>    
+  mutate(Scenicness.number_of_all = strsplit(Number, ',') %>% unlist() %>% as.numeric() %>% sum(na.rm = TRUE),
+         Scenicness.mean_of_bayescore = strsplit(BayeScore, ',') %>% unlist() %>% as.numeric() %>% mean(),
+         Scenicness.median_of_bayescore = strsplit(BayeScore, ',') %>% unlist() %>% as.numeric() %>% median(),
+         Score_multiplied_by_Number = strsplit(VR, ',') %>% unlist() %>% as.numeric() %>% sum(na.rm = TRUE),
+         Scenicness.weighted_bayescore =  Score_multiplied_by_Number/(Scenicness.number_of_all + 3) + 
+                                          3*Scenicness.mean_of_bayescore/(Scenicness.number_of_all + 3)) |>
+  dplyr::select(-c(BayeScore, Number, VR, Score_multiplied_by_Number, Scenicness.number_of_all)) |>
+  ungroup() %>%
+  left_join(grid_1km, ., by = c('PLAN_NO' = 'PLAN_NO'))
+
+# -- extract raster values of wildness quality based on 1 km OSGB grid 
+library(exactextractr)
+
+Wildness <- raster('Z:\\R\\R projects\\LCA-GB\\James\\mce_eq256')
+
+st_crs(Wildness) == st_crs(grid_1km)
   
-test2 <- test1 |>  
-  mutate(Photos = strsplit(ID, ',') |> unlist() |> !is.na() |> length())
-
-strsplit(",") %>% unlist() %>% as.numeric() %>% mean()
-
-data %>% 
-      group_by(foo) %>% 
-      mutate(bars_by_foo = paste0(bar, collapse = "")) 
-
-# library(dplyr)
-# df %>% 
-#   group_by_(~page, ~passage, ~person) %>%
-#   summarize_(text=~paste(text, collapse=' '))
-
-  aggregate(#cbind(# ID,
-                  # `Geograph URI`,
-                  # Votes,
-                  # Number,
-                  # Mean,
-                  # Median,
-                  # BayeScore,
-                  # Entropy,
-                  Variance~PLAN_NO, data = ., FUN = paste, collapse = ",") %>%
-  merge(grid_1km, ., by = "PLAN_NO", all = T) |>
-  as_tibble()  
-  
-plot(UK['NAME_0']) +
-  plot(test[is.na(test$ID),'Mean'])
-
-grid_1km <- st_join(grid_1km, sc, join = st_within, left = TRUE) |>
-  dplyr::select(PLAN_NO, 
-                `Scenic-Or-Not ID` = ID,
-                `Geograph URI`,
-                Votes,
-                Number,
-                Mean,
-                Median,
-                BayeScore,
-                Entropy,
-                Variance)
-
 grid_1km <- st_transform(grid_1km, crs = st_crs(Wildness)) %>%
   exact_extract(Wildness, ., 
                 fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), 
@@ -717,11 +693,149 @@ grid_1km <- st_transform(grid_1km, crs = st_crs(Wildness)) %>%
          Wildness.iqr = q75 - q25,
          Wildness.cv = coefficient_of_variation,
          Wildness.variance = variance) |>
-  dplyr::select(-c(mean, median, q25, q75, coefficient_of_variation, variance)) |>
+  dplyr::select(-c(mean, median, q25, q75, coefficient_of_variation, variance)) %>%
   bind_cols(grid_1km, .) |>
   st_transform(crs = 27700)
 
+# -- calculate the centroid coordinate for each grid cell
+grid_1km <- mutate(grid_1km, 
+                   x_coord = st_centroid(grid_1km$geometry) %>% st_coordinates() %>% .[, 1],
+                   y_coord = st_centroid(grid_1km$geometry) %>% st_coordinates() %>% .[, 2])
 
+# -- download the administrative region for Great Britain from GADM for subseting the 1 km grid
+GB <- raster::getData('GADM', country = 'GBR', level = 1) |>
+  as('sf') |>
+  filter(!NAME_1=='Northern Ireland') |>
+  st_union() |>
+  st_transform(crs = 27700)
+plot(GB)
+
+grid_1km <- grid_1km[GB, ]
+```
+# prepare environment for running python
+```{r}
+Sys.setenv("RETICULATE_PYTHON" = ".\\.venv\\Scripts\\python.exe")
+# Sys.getenv()
+Sys.which("Python")
+
+# py_discover_config()
+
+library(reticulate)
+# -- creates an interactive Python console, REPL (Read, Eval, Print Loop), within R.
+repl_python() 
+```
+
+# SHAP value
+```{python plot}
+import shap
+
+X =  r.grid_1km.loc[:, ['Scenicness.weighted_bayescore', 'Wildness.median', 'x_coord', 'y_coord']]
+# -- play shap
+explainer = shap.TreeExplainer(model)
+
+# The approximate argument set to True to fix some of the shap_values with NaN value
+# shape of shap_values is : (4, 1321, 4) means 4 classes, 1321 rows(observations), each 4 columns(features).
+shap_values = explainer.shap_values(X, approximate = True)
+
+# shap.plots.beeswarm(shap_values, show = True, color_bar = False)
+# plt.colorbar()
+# plt.show()
+
+# In the case of matplotlib version 3.5 above, the adjustment of colorbar legend was referred to https://stackoverflow.com/questions/70461753/shap-the-color-bar-is-not-displayed-in-the-summary-plot/
+# summary plot for "CLASS 0" (Low scenic quality) 
+
+# landmap = r.landmap
+
+# X_vars = ['Scenicness','Wildness', 'x_coord', 'y_coord']
+# 
+# import matplotlib.pyplot as plt
+# 
+# fig, ax = plt.subplots(2,2,figsize=(15,15))
+# 
+# for j in range(len(shap_values)):
+#     ax = ax.ravel()
+#     # X.plot(ax=ax[j],column = shap_values.values[:,j],legend=True,
+#     #              vmin=-0.8,vmax=0.8,cmap=shap.plots.colors.red_white_blue)
+#     fig[j] = shap.summary_plot(shap_values[1],
+#                               X.values,
+#                               feature_names = X_vars,
+#                               show = False),
+#                               # plot_type = 'compact_dot', # making the dots disappear
+#                               plot_size = (50, 6))
+#              plt.gcf().axes[-1].set_aspect('auto')
+#              plt.tight_layout()
+#              plt.gcf().axes[-1].set_box_aspect(40)
+#     ax[j].set_title("SHAP for\n" + X_vars[j],fontsize=10)
+#     
+# fig.delaxes(ax[-1])
+# 
+# 
+# shap.summary_plot(shap_values[1],
+#                   X.values,
+#                   feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], show = False),
+#                   # plot_type = 'compact_dot', # making the dots disappear
+#                   plot_size = (50, 6))
+# plt.gcf().axes[-1].set_aspect('auto')
+# plt.tight_layout()
+# plt.gcf().axes[-1].set_box_aspect(40) # smaller "box_aspect" value to make colorbar thicker
+# plt.show(); plt.close()
+# plt.savefig('fig_tes1.png', bbox_inches='tight',dpi=300); plt.close()
+```
+## Spatial patterns of SHAP values
+```{r}
+shap_values = py$shap_values
+shap_Low = data.frame(shap_values[[1]]) %>% transmute(SHAP_Scenicness_Low = X1, 
+                                                      SHAP_Wildness_Low = X2,
+                                                      SHAP_Location_Low = X3 + X4) 
+shap_Moderate = data.frame(shap_values[[2]]) %>% transmute(SHAP_Scenicness_Moderate = X1,
+                                                           SHAP_Wildness_Moderate = X2,
+                                                           SHAP_Location_Moderate= X3 + X4)
+shap_High = data.frame(shap_values[[3]]) %>% transmute(SHAP_Scenicness_High = X1,
+                                                       SHAP_Wildness_High = X2,
+                                                       SHAP_Location_High = X3 + X4)
+shap_Outstanding = data.frame(shap_values[[4]]) %>% transmute(SHAP_Scenicness_Outstanding = X1,
+                                                              SHAP_Wildness_Outstanding = X2,
+                                                              SHAP_Location_Outstanding = X3 + X4)
+   
+grid_1km_shap = cbind(grid_1km, shap_Low, shap_Moderate, shap_High, shap_Outstanding)
+rm(list = c('shap_Low', 'shap_Moderate', 'shap_High', 'shap_Outstanding'))
+```
+## plotting the spatial distribution of SHAP values
+```{r}
+library(ggplot2)
+
+f2 <- list()
+
+for (i in 1:12) {
+  f2[[i]] <- ggplot() +
+    geom_sf(data = grid_1km_shap, aes(fill = !!sym(names(grid_1km_shap)[i+11])), colour = NA) +
+    theme_map() +
+    labs(x = NULL, 
+         y = NULL, 
+         title = names(grid_1km_shap)[i+11]) + # stringr::str_c("SHAP for ", collapse = " ")
+    theme(legend.position = "bottom",
+          title = element_text(size = 15)) +
+    scale_fill_gradient2(low = ("#CB181D"),
+                         mid = "white",
+                         name = NULL,
+                         high = ("#2171B5"),
+                         midpoint = 0,
+                         space = "Lab",
+                         na.value = "white",
+                         guide = guide_colourbar(title.position = "top",
+                                                 # title.hjust = 0.5,
+                                                 title.vjust = 0.8,
+                                                 barwidth = 15))
+}
+
+
+setwd("Z:\\R\\R projects\\LCA-GB\\figures")
+png(filename = "SHAP_values_4.png", w = 10*2, h = 6*2, units = "in", res = 300)
+par(mar = c(0,0,0,0))
+multiplot(list(f2[1], f2[2], f2[3], f2[4], 
+               f2[5], f2[6], f2[7], f2[8], 
+               f2[9], f2[10], f2[11], f2[12]), cols = 4)
+dev.off()
 ```
 
 ```{python}
