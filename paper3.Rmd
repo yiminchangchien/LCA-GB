@@ -171,24 +171,35 @@ Wildness <- raster('Z:\\R\\R projects\\LCA-GB\\James\\mce_eq256')
 LANDMAP <- st_transform(LANDMAP, crs = st_crs(Wildness)) %>%
   exact_extract(Wildness, ., 
                 fun = c('mean', 'median', 'coefficient_of_variation', 'variance', 'quantile'), 
-                quantiles = c(0.25, 0.75)) %>%
+                quantiles = c(0.25, 0.75)) |>
   mutate(Wildness.mean = mean,
          Wildness.median = median,
          Wildness.iqr = q75 - q25,
          Wildness.cv = coefficient_of_variation,
-         Wildness.variance = variance) %>%
+         Wildness.variance = variance) |>
   dplyr::select(-c(mean, median, q25, q75, coefficient_of_variation, variance)) %>%
-  bind_cols(LANDMAP, .) %>%
+  bind_cols(LANDMAP, .) |>
   st_transform(crs = 27700)
 
-landmap <- st_cast(LANDMAP, "POLYGON") %>%
+landmap <- st_cast(LANDMAP, "POLYGON") |>
   dplyr::mutate(UID = row_number(),
                 x_coord = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 1],
                 y_coord = st_centroid(landmap$geometry) %>% st_coordinates() %>% .[, 2])
 summary(landmap)
+
+plot(st_centroid(landmap)[, 1])
+plot(d[, 'centroids'], add = T, col = 'red', pch = 19)
+
+test <- st_centroid(landmap)
+  st_centroid() %>% 
+  # this is the crs from d, which has no EPSG code:
+  st_transform(., '+proj=longlat +ellps=GRS80 +no_defs') %>%
+  # since you want the centroids in a second geometry col:
+  st_geometry()
 ```
 
 Separate the consultant and then split train-test sets
+
 ```{r}
 landmap_A = landmap %>% filter(Consultant == "A")
 landmap_B = landmap %>% filter(Consultant == "B")
@@ -211,11 +222,11 @@ dim(test_set)
 
 X_train <- train_set %>% 
   dplyr::select(Scenicness = Scenicness.weighted_bayescore,
-                Wildness = Wildness.median, 
+                Wildness = Wildness.mean, 
                 x_coord, y_coord)
  X_test <-  test_set %>% 
    dplyr::select(Scenicness = Scenicness.weighted_bayescore,
-                 Wildness = Wildness.median, 
+                 Wildness = Wildness.mean,
                  x_coord, y_coord)
 
 y_train <- train_set %>% dplyr::select(ScenicQuality)
@@ -234,7 +245,6 @@ library(reticulate)
 repl_python() 
 ```
 
-
 ```{python}
 # -- load in the train/test sets
 X_train = r.X_train
@@ -246,9 +256,11 @@ scale_mapper = {'Low': int(0),
                 'Moderate': int(1),
                 'High': int(2),
                 'Outstanding': int(3)}
+                
 y_train[['ScenicQuality']] = y_train[['ScenicQuality']].replace(scale_mapper).astype('int')
  y_test[['ScenicQuality']] = y_test[['ScenicQuality']].replace(scale_mapper).astype('int')
 ```
+
 ## Hyperparameter Tuning
 
 The optimization process consists of 4 parts which are as follows:
@@ -393,8 +405,7 @@ dtrain = xgb.DMatrix(X_train, label = y_train)
 #          'num_class': 4,
 #          'objective': 'multi:softmax',
 #        'eval_metric': 'merror',
-#               'seed': 2046
-#     }
+#               'seed': 2046}
 
 # Consultant B
 params = {'booster': 'gbtree',
@@ -471,6 +482,7 @@ model.load_model("Z:\\R\\R projects\\LCA-GB\\models\\model.json")
 ```
 
 ## Confusion matrix and its visualisation
+
 ```{python}
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
@@ -511,31 +523,34 @@ for j in range(len(shap_values)):
     # X.plot(ax=ax[j],column = shap_values.values[:,j],legend=True,
     #              vmin=-0.8,vmax=0.8,cmap=shap.plots.colors.red_white_blue)
     fig[j] = shap.summary_plot(shap_values[1],
-                              X.values,
-                              feature_names = X_vars,
-                              show = False),
-                              # plot_type = 'compact_dot', # making the dots disappear
-                              plot_size = (50, 6))
+                               X.values,
+                               feature_names = X_vars,
+                               show = False),
+                               # plot_type = 'compact_dot', # making the dots disappear
+                               plot_size = (50, 6))
+                              
              plt.gcf().axes[-1].set_aspect('auto')
              plt.tight_layout()
-             plt.gcf().axes[-1].set_box_aspect(40)
+             plt.gcf().axes[-1].set_box_aspect(40) # smaller "box_aspect" value to make colorbar thicker
     ax[j].set_title("SHAP for\n" + X_vars[j],fontsize=10)
     
 fig.delaxes(ax[-1])
 
-
-shap.summary_plot(shap_values[1],
-                  X.values,
-                  feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], show = False),
-                  # plot_type = 'compact_dot', # making the dots disappear
-                  plot_size = (50, 6))
-plt.gcf().axes[-1].set_aspect('auto')
-plt.tight_layout()
-plt.gcf().axes[-1].set_box_aspect(40) # smaller "box_aspect" value to make colorbar thicker
-plt.show(); plt.close()
+# 
+# shap.summary_plot(shap_values[1],
+#                   X.values,
+#                   feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], show = False),
+#                   # plot_type = 'compact_dot', # making the dots disappear
+#                   plot_size = (50, 6))
+# plt.gcf().axes[-1].set_aspect('auto')
+# plt.tight_layout()
+# plt.gcf().axes[-1].set_box_aspect(40) 
+# plt.show(); plt.close()
 # plt.savefig('fig_tes1.png', bbox_inches='tight',dpi=300); plt.close()
 ```
+
 ## Spatial patterns of SHAP values
+
 ```{r}
 shap_values = py$shap_values
 shap_Low = data.frame(shap_values[[1]]) %>% transmute(SHAP_Scenicness_Low = X1, 
@@ -555,7 +570,9 @@ landmap_shap = cbind(landmap, shap_Low, shap_Moderate, shap_High, shap_Outstandi
 rm(list = c('shap_Low', 'shap_Moderate', 'shap_High', 'shap_Outstanding'))
 
 ```
+
 ## Visualising the spatial distributions of SHAP values for each covariate with each class
+
 ```{r}
 library(ggplot2)
 
@@ -634,7 +651,9 @@ multiplot(list(f[1], f[2], f[3], f[4],
                f[9], f[10], f[11], f[12]), cols = 4)
 dev.off()
 ```
+
 # Change of support (to 1 km grid)
+
 ```{r}
 # -- download OSGB 1 km grid from github and covert its coordinate system to 27700
 grid_1km <- "https://raw.githubusercontent.com/charlesroper/OSGB_Grids/master/GeoJSON/OSGB_Grid_1km.geojson" |>
@@ -697,12 +716,14 @@ grid_1km <- st_transform(grid_1km, crs = st_crs(Wildness)) %>%
   bind_cols(grid_1km, .) |>
   st_transform(crs = 27700)
 
+rm('Wildness')
+
 # -- calculate the centroid coordinate for each grid cell
 grid_1km <- mutate(grid_1km, 
                    x_coord = st_centroid(grid_1km$geometry) %>% st_coordinates() %>% .[, 1],
                    y_coord = st_centroid(grid_1km$geometry) %>% st_coordinates() %>% .[, 2])
 
-# -- download the administrative region for Great Britain from GADM for subseting the 1 km grid
+# -- download the administrative region for Great Britain from GADM for sub-setting the 1 km grid
 GB <- raster::getData('GADM', country = 'GBR', level = 1) |>
   as('sf') |>
   filter(!NAME_1=='Northern Ireland') |>
@@ -711,8 +732,14 @@ GB <- raster::getData('GADM', country = 'GBR', level = 1) |>
 plot(GB)
 
 grid_1km <- grid_1km[GB, ]
+
+# -- remove the grid cells that lack of scenicness and wildness measures
+grid_1km <- grid_1km[!is.na(grid_1km$Scenicness.weighted_bayescore), ] %>%
+  .[!is.na(grid_1km$Wildness.median), ]
 ```
+
 # prepare environment for running python
+
 ```{r}
 Sys.setenv("RETICULATE_PYTHON" = ".\\.venv\\Scripts\\python.exe")
 # Sys.getenv()
@@ -726,6 +753,7 @@ repl_python()
 ```
 
 # SHAP value
+
 ```{python plot}
 import shap
 
@@ -736,52 +764,10 @@ explainer = shap.TreeExplainer(model)
 # The approximate argument set to True to fix some of the shap_values with NaN value
 # shape of shap_values is : (4, 1321, 4) means 4 classes, 1321 rows(observations), each 4 columns(features).
 shap_values = explainer.shap_values(X, approximate = True)
-
-# shap.plots.beeswarm(shap_values, show = True, color_bar = False)
-# plt.colorbar()
-# plt.show()
-
-# In the case of matplotlib version 3.5 above, the adjustment of colorbar legend was referred to https://stackoverflow.com/questions/70461753/shap-the-color-bar-is-not-displayed-in-the-summary-plot/
-# summary plot for "CLASS 0" (Low scenic quality) 
-
-# landmap = r.landmap
-
-# X_vars = ['Scenicness','Wildness', 'x_coord', 'y_coord']
-# 
-# import matplotlib.pyplot as plt
-# 
-# fig, ax = plt.subplots(2,2,figsize=(15,15))
-# 
-# for j in range(len(shap_values)):
-#     ax = ax.ravel()
-#     # X.plot(ax=ax[j],column = shap_values.values[:,j],legend=True,
-#     #              vmin=-0.8,vmax=0.8,cmap=shap.plots.colors.red_white_blue)
-#     fig[j] = shap.summary_plot(shap_values[1],
-#                               X.values,
-#                               feature_names = X_vars,
-#                               show = False),
-#                               # plot_type = 'compact_dot', # making the dots disappear
-#                               plot_size = (50, 6))
-#              plt.gcf().axes[-1].set_aspect('auto')
-#              plt.tight_layout()
-#              plt.gcf().axes[-1].set_box_aspect(40)
-#     ax[j].set_title("SHAP for\n" + X_vars[j],fontsize=10)
-#     
-# fig.delaxes(ax[-1])
-# 
-# 
-# shap.summary_plot(shap_values[1],
-#                   X.values,
-#                   feature_names = ['Scenicness', 'Wildness', 'x_coord', 'y_coord'], show = False),
-#                   # plot_type = 'compact_dot', # making the dots disappear
-#                   plot_size = (50, 6))
-# plt.gcf().axes[-1].set_aspect('auto')
-# plt.tight_layout()
-# plt.gcf().axes[-1].set_box_aspect(40) # smaller "box_aspect" value to make colorbar thicker
-# plt.show(); plt.close()
-# plt.savefig('fig_tes1.png', bbox_inches='tight',dpi=300); plt.close()
 ```
+
 ## Spatial patterns of SHAP values
+
 ```{r}
 shap_values = py$shap_values
 shap_Low = data.frame(shap_values[[1]]) %>% transmute(SHAP_Scenicness_Low = X1, 
@@ -800,14 +786,16 @@ shap_Outstanding = data.frame(shap_values[[4]]) %>% transmute(SHAP_Scenicness_Ou
 grid_1km_shap = cbind(grid_1km, shap_Low, shap_Moderate, shap_High, shap_Outstanding)
 rm(list = c('shap_Low', 'shap_Moderate', 'shap_High', 'shap_Outstanding'))
 ```
+
 ## plotting the spatial distribution of SHAP values
+
 ```{r}
 library(ggplot2)
 
-f2 <- list()
+f <- list()
 
 for (i in 1:12) {
-  f2[[i]] <- ggplot() +
+  f[[i]] <- ggplot() +
     geom_sf(data = grid_1km_shap, aes(fill = !!sym(names(grid_1km_shap)[i+11])), colour = NA) +
     theme_map() +
     labs(x = NULL, 
@@ -828,26 +816,108 @@ for (i in 1:12) {
                                                  barwidth = 15))
 }
 
+f[13] <- ggplot() +
+  geom_sf(data = grid_1km_shap, aes(fill = !!sym(names(grid_1km_shap)[4])), colour = NA) +
+  theme_map() +
+  labs(x = NULL, 
+       y = NULL, 
+       title = names(grid_1km_shap)[4]) + # stringr::str_c("SHAP for ", collapse = " ")
+  theme(legend.position = "bottom",
+        title = element_text(size = 15)) +
+  scale_fill_gradient2(low = ("#CB181D"),
+                       mid = "white",
+                       name = NULL,
+                       high = ("#2171B5"),
+                       midpoint = 0,
+                         space = "Lab",
+                         na.value = "white",
+                         guide = guide_colourbar(title.position = "top",
+                                                 # title.hjust = 0.5,
+                                                 title.vjust = 0.8,
+                                                 barwidth = 15))
+
+f[14] <- ggplot() +
+  geom_sf(data = grid_1km_shap, aes(fill = !!sym(names(grid_1km_shap)[6])), colour = NA) +
+  theme_map() +
+  labs(x = NULL, 
+       y = NULL, 
+       title = names(grid_1km_shap)[6]) + # stringr::str_c("SHAP for ", collapse = " ")
+  theme(legend.position = "bottom",
+        title = element_text(size = 15)) +
+  scale_fill_gradient2(low = ("#CB181D"),
+                       mid = "white",
+                       name = NULL,
+                       high = ("#2171B5"),
+                       midpoint = 0,
+                         space = "Lab",
+                         na.value = "white",
+                         guide = guide_colourbar(title.position = "top",
+                                                 # title.hjust = 0.5,
+                                                 title.vjust = 0.8,
+                                                 barwidth = 15))
+
+f[15] <- ggplot() +
+  geom_sf(data = grid_1km_shap, aes(fill = !!sym(names(grid_1km_shap)[10])), colour = NA) +
+  theme_map() +
+  labs(x = NULL, 
+       y = NULL, 
+       title = names(grid_1km_shap)[10]) + # stringr::str_c("SHAP for ", collapse = " ")
+  theme(legend.position = "bottom",
+        title = element_text(size = 15)) +
+  scale_fill_gradient2(low = ("#CB181D"),
+                       mid = "white",
+                       name = NULL,
+                       high = ("#2171B5"),
+                       midpoint = 0,
+                         space = "Lab",
+                         na.value = "white",
+                         guide = guide_colourbar(title.position = "top",
+                                                 # title.hjust = 0.5,
+                                                 title.vjust = 0.8,
+                                                 barwidth = 15))
+
+f[16] <- ggplot() +
+  geom_sf(data = grid_1km_shap, aes(fill = !!sym(names(grid_1km_shap)[11])), colour = NA) +
+  theme_map() +
+  labs(x = NULL, 
+       y = NULL, 
+       title = names(grid_1km_shap)[11]) + # stringr::str_c("SHAP for ", collapse = " ")
+  theme(legend.position = "bottom",
+        title = element_text(size = 15)) +
+  scale_fill_gradient2(low = ("#CB181D"),
+                       mid = "white",
+                       name = NULL,
+                       high = ("#2171B5"),
+                       midpoint = 0,
+                         space = "Lab",
+                         na.value = "white",
+                         guide = guide_colourbar(title.position = "top",
+                                                 # title.hjust = 0.5,
+                                                 title.vjust = 0.8,
+                                                 barwidth = 15))
 
 setwd("Z:\\R\\R projects\\LCA-GB\\figures")
-png(filename = "SHAP_values_4.png", w = 10*2, h = 6*2, units = "in", res = 300)
+png(filename = "SHAP_values_5.png", w = 10*2, h = 6*2, units = "in", res = 300)
 par(mar = c(0,0,0,0))
-multiplot(list(f2[1], f2[2], f2[3], f2[4], 
-               f2[5], f2[6], f2[7], f2[8], 
-               f2[9], f2[10], f2[11], f2[12]), cols = 4)
+multiplot(list(f[1], f[2], f[3], f[4], f[13],
+               f[5], f[6], f[7], f[8], f[14],
+               f[9], f[10], f[11], f[12], f[15]), cols = 5)
 dev.off()
+rm(c('i', 'f'))
 ```
+
+#### Waiting for deletion -- The XGBoost built-in feature importance
 
 ```{python}
 # -- view the feature importance
-importances = model.feature_importances_
+importances = model.feature_importances_ 
 indices = np.argsort(importances)
 features = X.columns
 
 fig, ax = plt.subplots()
 
 plt.title('Feature Importances')
-plt.barh(range(len(indices)), importances[indices], color='g', align='center')
+plt.barh(range(len(indices)), importances[indices], color = 'g', align = 'center')
 plt.yticks(range(len(indices)), [features[i] for i in indices])
 plt.xlabel('Relative Importance')
 plt.show()
@@ -857,84 +927,15 @@ fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\pyplot.png")
 plt.clf()
 ```
 
-```{python}
-# get just the explanations for the positive class
-# shap_values = shap_values[...,1]
-
-# shap.plots.bar(shap_values[...,1])
-```
+#### Waiting for deletion -- The dependence plots may not be used.
 
 ```{python}
 shap.initjs()
 # shap_values[1] what does the index mean?
-shap.summary_plot(shap_values[1], X_train.values, feature_names=X_train.columns)
+shap.summary_plot(shap_values[1], X_train.values, feature_names = X_train.columns)
 # shap.summary_plot(shap_values, X_test, max_display = X_test.shape[1]) 
-
 
 # -- Dependence Contribution Plots
 # make plot.
 shap.dependence_plot('Scenicness.median_of_bayescore', shap_values[3], X_train, interaction_index = 'Wildness.median')
-
-
-# explainer = shap.TreeExplainer(model2)
-# shap_values = explainer.shap_values(X_sampled)
-# shap.summary_plot (shap_values, X_sampled, max_display=X_sampled.shape[1]) 
-# i=2
-# shap.force_plot(explainer.expected_value[0], shap_values[0][i], X_test.values[i], feature_names = X_test.columns)
-# 
-# 
-# fig.set_size_inches(18.5, 20.5)
-# fig.savefig("Z:\\R\\R projects\\LCA-GB\\models\\shap.png")
-# 
-# # -- first trial
-# shap.initjs()
-# shap_values = shap.TreeExplainer(model).shap_values(X_test)
-# shap.summary_plot(shap_values, X_test)
-# 
-# # -- second trial
-# scaler = StandardScaler()
-# scaled_data = scaler.fit_transform(X_test.iloc[:,:-1])
-# shap_values = explainer.shap_values(scaled_data.iloc[0,:-1].values.reshape(1,-1))
-# shap.force_plot(explainer.expected_value[0], shap_values[0], link='logit')  # repeat changing 0 for i in range(0, 5)
-# 
-# # -- third trial
-# shap.initjs()
-# class_names = ['Low', 'Moderate', ' High', 'Outstanding']
-# shap.summary_plot(shap_values, X_test, plot_type="bar", class_names= class_names, feature_names = ['Scenicness', 'Wildness'])
-# 
-# # -- plot the global importance of each feature
-# shap.plots.bar(explainer)
-# 
-# # visualize the first prediction's explanation
-# shap.force_plot(explainer.expected_value[0], shap_values[0])
-# 
-# # fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
-# # shap.summary_plot(shap_values)
-# # # or 
-# # shap.plots.beeswarm(shap_values)
-# shap.summary_plot(shap_values[2], X_test)
-# 
-# # fig, ax = plt.subplots(figsize=(20, 20),dpi=200)
-# shap.summary_plot(shap_values, X_test, plot_type="bar")
-# 
-# shap_interaction_values = shap.TreeExplainer(model).shap_interaction_values(X_train)
-#     
-# X_names = ['Scenicness.median','x_coord','y_coord']
-# 
-# shap.summary_plot(shap_interaction_values, X_train, max_display=15, 
-#                   feature_names = X_names,
-#                   plot_type = 'dot')
-#                   # plot_type="compact_dot")
-#                   
-# import shap  # package used to calculate Shap values
-# 
-# # Create object that can calculate shap values
-# explainer = shap.TreeExplainer(my_model)
-# 
-# # calculate shap values. This is what we will plot.
-# # Calculate shap_values for all of val_X rather than a single row, to have more data for plot.
-# shap_values = explainer.shap_values(val_X)
-# 
-# # Make plot. Index of [1] is explained in text below.
-# shap.summary_plot(shap_values[1], val_X)                  
 ```
